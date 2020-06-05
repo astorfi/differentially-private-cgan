@@ -1,24 +1,15 @@
 import argparse
-import os
 import numpy as np
-import math
 import time
 import random
-import matplotlib.pyplot as plt
 import os
-from subprocess import call
-import torchvision.transforms as transforms
-from torchvision.utils import save_image
-from torchvision.utils import make_grid
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
-from torchvision import datasets
 from torch.autograd import Variable
 import torch.backends.cudnn as cudnn
 import torch.nn as nn
-import torch.nn.functional as F
 import torch
-from torchdp import PrivacyEngine
+import math
 
 parser = argparse.ArgumentParser()
 
@@ -58,19 +49,12 @@ parser.add_argument("--epoch_time_show", type=bool, default=True, help="interval
 parser.add_argument("--epoch_save_model_freq", type=int, default=10, help="number of epops per model save")
 parser.add_argument("--minibatch_averaging", type=bool, default=False, help="Minibatch averaging")
 
-# Privacy# Privacy
-parser.add_argument("--disable_dp", type=bool, default=False, help="Enforce Privacy?")
-parser.add_argument("--delta", type=float, default=0.00001, help="Enforce Privacy?")
-parser.add_argument("--max_per_sample_grad_norm", type=float, default=1.0, help="Clip per-sample gradients to this norm (default 1.0)")
-parser.add_argument("--sigma", type=float, default=1.0, help="Noise multiplier (default 1.0)")
-
-# Process
 parser.add_argument("--pretrained_status", type=bool, default=False, help="If want to use ae pretrained weights")
-parser.add_argument("--training", type=bool, default=True, help="Training status")
+parser.add_argument("--training", type=bool, default=False, help="Training status")
 parser.add_argument("--resume", type=bool, default=False, help="Training status")
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
-parser.add_argument("--generate", type=bool, default=False, help="Generating Sythetic Data")
-parser.add_argument("--evaluate", type=bool, default=False, help="Evaluation status")
+parser.add_argument("--generate", type=bool, default=True, help="Generating Sythetic Data")
+parser.add_argument("--evaluate", type=bool, default=True, help="Evaluation status")
 parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/model/' + experimentName),
                     help="Training status")
 opt = parser.parse_args()
@@ -327,13 +311,64 @@ class Discriminator(nn.Module):
 ### Lossess ###
 ###############
 
-def generator_loss(y_fake, y_true):
-    """
-    Gen loss
-    Can be replaced with generator_loss = torch.nn.BCELoss(). Think why?
-    """
-    epsilon = 1e-12
-    return -0.5 * torch.mean(torch.log(y_fake + epsilon))
+def _gradient_penalty(real_data, generated_data):
+    batch_size = real_data.size()[0]
+
+    # Calculate interpolation
+    alpha = torch.rand(batch_size, 1, 1, 1)
+    alpha = alpha.expand_as(real_data)
+    if self.use_cuda:
+        alpha = alpha.cuda()
+    interpolated = alpha * real_data.data + (1 - alpha) * generated_data.data
+    interpolated = Variable(interpolated, requires_grad=True)
+    if self.use_cuda:
+        interpolated = interpolated.cuda()
+
+    # Calculate probability of interpolated examples
+    prob_interpolated = self.D(interpolated)
+
+    # Calculate gradients of probabilities with respect to examples
+    gradients = torch_grad(outputs=prob_interpolated, inputs=interpolated,
+                           grad_outputs=torch.ones(
+                               prob_interpolated.size()).cuda() if self.use_cuda else torch.ones(
+                               prob_interpolated.size()),
+                           create_graph=True, retain_graph=True)[0]
+
+    # Gradients have shape (batch_size, num_channels, img_width, img_height),
+    # so flatten to easily take norm per example in batch
+    gradients = gradients.view(batch_size, -1)
+    self.losses['gradient_norm'].append(gradients.norm(2, dim=1).mean().data[0])
+
+    # Derivatives of the gradient close to 0 can cause problems because of
+    # the square root, so manually calculate norm and add epsilon
+    gradients_norm = torch.sqrt(torch.sum(gradients ** 2, dim=1) + 1e-12)
+
+    # Return gradient penalty
+    return self.gp_weight * ((gradients_norm - 1) ** 2).mean()
+
+
+# https://github.com/caogang/wgan-gp/blob/master/gan_mnist.py
+def calc_gradient_penalty(netD, real_data, fake_data):
+    # print real_data.size()
+    alpha = torch.rand(BATCH_SIZE, 1)
+    alpha = alpha.expand(real_data.size())
+    alpha = alpha.cuda(gpu) if use_cuda else alpha
+
+    interpolates = alpha * real_data + ((1 - alpha) * fake_data)
+
+    if use_cuda:
+        interpolates = interpolates.cuda(gpu)
+    interpolates = autograd.Variable(interpolates, requires_grad=True)
+
+    disc_interpolates = netD(interpolates)
+
+    gradients = autograd.grad(outputs=disc_interpolates, inputs=interpolates,
+                              grad_outputs=torch.ones(disc_interpolates.size()).cuda(gpu) if use_cuda else torch.ones(
+                                  disc_interpolates.size()),
+                              create_graph=True, retain_graph=True, only_inputs=True)[0]
+
+    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * LAMBDA
+    return gradient_penalty
 
 
 def autoencoder_loss(x_output, y_target):
@@ -342,20 +377,11 @@ def autoencoder_loss(x_output, y_target):
     This implementation is equivalent to the following:
     torch.nn.BCELoss(reduction='sum') / batch_size
     As our matrix is too sparse, first we will take a sum over the features and then do the mean over the batch.
-    WARNING: This is NOT equivalent to torch.nn.BCELoss(reduction='mean') as the later on, mean over both features and batches.
+    WARNING: This is NOT equivalent to torch.nn.BCELoss(reduction='mean') as the latter one, mean over both features and batches.
     """
     epsilon = 1e-12
     term = y_target * torch.log(x_output + epsilon) + (1. - y_target) * torch.log(1. - x_output + epsilon)
     loss = torch.mean(-torch.sum(term, 1), 0)
-    return loss
-
-
-def discriminator_loss(outputs):
-    """
-    autoencoder_loss
-    Cab be replaced with discriminator_loss = torch.nn.BCELoss(). Think why?
-    """
-    loss = torch.mean((1 - labels) * outputs) - torch.mean(labels * outputs)
     return loss
 
 
@@ -459,20 +485,6 @@ optimizer_D = torch.optim.Adam(discriminatorModel.parameters(), lr=opt.lr, betas
 optimizer_A = torch.optim.Adam(autoencoderModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2),
                                weight_decay=opt.weight_decay)
 
-# Privacy
-if not opt.disable_dp:
-    privacy_engine = PrivacyEngine(
-        module=autoencoderModel,
-        batch_size=opt.batch_size,
-        sample_size=len(dataloader_train),
-        alphas=[1 + x / 10.0 for x in range(1, 100)] + list(range(12, 64)),
-        noise_multiplier=opt.sigma,
-        max_grad_norm=opt.max_per_sample_grad_norm,
-    )
-    privacy_engine.attach(optimizer_A)
-
-
-
 ################
 ### TRAINING ###
 ################
@@ -528,14 +540,6 @@ if opt.training:
 
                 a_loss.backward()
                 optimizer_A.step()
-
-                if not opt.disable_dp:
-                    epsilon, best_alpha = optimizer_A.privacy_engine.get_privacy_spent(opt.delta)
-                    print(
-                        f"(Ɛ = {epsilon}, 𝛿 = {args.delta}) for α = {best_alpha}"
-                    )
-                else:
-                    pass
 
                 batches_done = epoch_pre * len(dataloader_train) + i
                 if batches_done % opt.sample_interval == 0:
@@ -720,42 +724,6 @@ if opt.training:
             # ls -d -1tr /home/sina/experiments/pytorch/model/* | head -n -10 | xargs -d '\n' rm -f
             # call("ls -d -1tr " + opt.expPATH + "/*" + " | head -n -10 | xargs -d '\n' rm -f", shell=True)
 
-if opt.finetuning:
-
-    # Loading the checkpoint
-    checkpoint = torch.load(os.path.join(opt.PATH, "model_epoch_200.pth"))
-
-    # Setup model
-    generatorModel = Generator()
-    discriminatorModel = Discriminator()
-
-    if cuda:
-        generatorModel.cuda()
-        discriminatorModel.cuda()
-        discriminator_loss.cuda()
-
-    # Setup optimizers
-    optimizer_G = torch.optim.Adam(generatorModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
-    optimizer_D = torch.optim.Adam(discriminatorModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
-
-    # Load models
-    generatorModel.load_state_dict(checkpoint['Generator_state_dict'])
-    discriminatorModel.load_state_dict(checkpoint['Discriminator_state_dict'])
-
-    # Load optimizers
-    optimizer_G.load_state_dict(checkpoint['optimizer_G_state_dict'])
-    optimizer_D.load_state_dict(checkpoint['optimizer_D_state_dict'])
-
-    # Load losses
-    g_loss = checkpoint['g_loss']
-    d_loss = checkpoint['d_loss']
-
-    # Load epoch number
-    epoch = checkpoint['epoch']
-
-    generatorModel.eval()
-    discriminatorModel.eval()
-
 if opt.generate:
 
     # Check cuda
@@ -770,7 +738,7 @@ if opt.generate:
     #####################################
 
     # Loading the checkpoint
-    checkpoint = torch.load(os.path.join(opt.expPATH, "model_epoch_100.pth"))
+    checkpoint = torch.load(os.path.join(opt.expPATH, "model_epoch_10.pth"))
 
     # Load models
     generatorModel.load_state_dict(checkpoint['Generator_state_dict'])
@@ -814,6 +782,40 @@ if opt.generate:
     # ave synthetic data
     np.save(os.path.join(opt.expPATH, "synthetic.npy"), gen_samples, allow_pickle=False)
 
+
+
+###################
+### Evaluation ####
+###################
+# MMD: https://github.com/xuqiantong/GAN-Metrics
+def distance(X, Y, sqrt):
+    nX = X.size(0)
+    nY = Y.size(0)
+    X = X.view(nX, -1).cuda()
+    X2 = (X * X).sum(1).resize_(nX, 1)
+    Y = Y.view(nY, -1).cuda()
+    Y2 = (Y * Y).sum(1).resize_(nY, 1)
+
+    M = torch.zeros(nX, nY)
+    M.copy_(X2.expand(nX, nY) + Y2.expand(nY, nX).transpose(0, 1) - 2 * torch.mm(X, Y.transpose(0, 1)))
+
+    del X, X2, Y, Y2
+
+    if sqrt:
+        M = ((M + M.abs()) / 2).sqrt()
+
+    return M
+
+def mmd(Mxx, Mxy, Myy, sigma) :
+    scale = Mxx.mean()
+    Mxx = torch.exp(-Mxx/(scale*2*sigma*sigma))
+    Mxy = torch.exp(-Mxy/(scale*2*sigma*sigma))
+    Myy = torch.exp(-Myy/(scale*2*sigma*sigma))
+    a = Mxx.mean()+Myy.mean()-2*Mxy.mean()
+    mmd = math.sqrt(max(a, 0))
+
+    return mmd
+
 if opt.evaluate:
     # Load synthetic data
     gen_samples = np.load(os.path.join(opt.expPATH, "synthetic.npy"), allow_pickle=False)
@@ -835,3 +837,38 @@ if opt.evaluate:
     # plt.xlabel('x')
     # plt.ylabel('y')
     plt.show()
+
+
+    #### Kolmogorov-Smirnov test ###
+    # Ref: https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.stats.ks_2samp.html
+    from scipy import stats
+    rvs1 = gen_samples[0]
+    rvs2 = real_samples[0]
+    pvalue_acum = 0
+    for i in range(gen_samples.shape[0]):
+        stat, pvalue = stats.ks_2samp(rvs1, rvs2)
+        pvalue_acum += pvalue
+    print('KS test pvalue',pvalue_acum / float(gen_samples.shape[0]))
+
+
+    # ref: https://docs.scipy.org/doc/scipy-0.15.1/reference/generated/scipy.stats.ks_2samp.html
+    # This is a two-sided test for the null hypothesis that 2 independent samples are drawn from the same continuous distribution.
+    from scipy import stats
+    import torch_two_sample
+    real_samples = torch.from_numpy(real_samples).float().to(device)
+    gen_samples = torch.from_numpy(gen_samples).float().to(device)
+
+    real = real_samples
+    fake = gen_samples
+    Mxx = distance(real, real, False)
+    Mxy = distance(real, fake, False)
+    Myy = distance(fake, fake, False)
+
+    sigma = 1
+    print('Manual MMD: ', mmd(Mxx, Mxy, Myy, sigma))
+
+    # Package
+    mmd = torch_two_sample.statistics_diff.MMDStatistic(10000, 10000)
+    test_stat = mmd(real_samples, gen_samples,
+                          alphas = [0.5], ret_matrix = False)
+    print('Pytorch package MMD: ', test_stat)
