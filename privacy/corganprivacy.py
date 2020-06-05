@@ -23,7 +23,7 @@ parser.add_argument("--DATASETPATH", type=str,
 parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
 parser.add_argument("--n_epochs_pretrain", type=int, default=100,
                     help="number of epochs of pretraining the autoencoder")
-parser.add_argument("--batch_size", type=int, default=100, help="size of the batches")
+parser.add_argument("--batch_size", type=int, default=1, help="size of the batches")
 parser.add_argument("--lr", type=float, default=0.001, help="adam: learning rate")
 parser.add_argument("--weight_decay", type=float, default=0.00001, help="l2 regularization")
 parser.add_argument("--b1", type=float, default=0.9, help="adam: decay of first order momentum of gradient")
@@ -49,12 +49,17 @@ parser.add_argument("--epoch_time_show", type=bool, default=True, help="interval
 parser.add_argument("--epoch_save_model_freq", type=int, default=10, help="number of epops per model save")
 parser.add_argument("--minibatch_averaging", type=bool, default=False, help="Minibatch averaging")
 
+#### Privacy
+parser.add_argument('--noise_multiplier', type=float, default=1.0)
+parser.add_argument('--max_per_sample_grad_norm', type=float, default=1.0)
+
+# Training/Testing
 parser.add_argument("--pretrained_status", type=bool, default=False, help="If want to use ae pretrained weights")
-parser.add_argument("--training", type=bool, default=False, help="Training status")
+parser.add_argument("--training", type=bool, default=True, help="Training status")
 parser.add_argument("--resume", type=bool, default=False, help="Training status")
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
-parser.add_argument("--generate", type=bool, default=True, help="Generating Sythetic Data")
-parser.add_argument("--evaluate", type=bool, default=True, help="Evaluation status")
+parser.add_argument("--generate", type=bool, default=False, help="Generating Sythetic Data")
+parser.add_argument("--evaluate", type=bool, default=False, help="Evaluation status")
 parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/model/' + experimentName),
                     help="Training status")
 opt = parser.parse_args()
@@ -538,7 +543,50 @@ if opt.training:
                 # # Reset gradients (if you comment below line, it would be a mess. Think why?!!!!!!!!!)
                 optimizer_A.zero_grad()
 
+                # Backward
                 a_loss.backward()
+
+                ################### Privacy #################
+                def _generate_noise(max_norm, parameter):
+                    if opt.noise_multiplier > 0:
+                        return torch.normal(
+                            0,
+                            opt.noise_multiplier * max_norm,
+                            parameter.grad.shape,
+                            device=device,
+                            generator=self.secure_generator,
+                        )
+                    return 0.0
+
+
+                # Calculate norm
+                total_norm = 0
+                for param in autoencoderModel.parameters():
+                    if param.requires_grad:
+                        total_norm += param.grad.data.norm(2).item() ** 2
+                total_norm = total_norm ** .5
+                clip_coef = min(opt.max_per_sample_grad_norm / (total_norm + 1e-6), 1.)
+                print('total_norm 1', total_norm)
+
+                # Clip grads
+                for param in autoencoderModel.parameters():
+                    if param.requires_grad:
+                        param.grad.data.mul_(clip_coef)
+
+                # params = (p for p in autoencoderModel.parameters() if p.requires_grad)
+                # for p in params:
+                #     noise = self._generate_noise(clip_value, p)
+                #     p.grad += noise
+
+                for param in autoencoderModel.parameters():
+                    if param.requires_grad:
+                        total_norm += param.grad.data.norm(2).item() ** 2
+                total_norm = total_norm ** .5
+                clip_coef = min(opt.max_per_sample_grad_norm / (total_norm + 1e-6), 1.)
+                print('total_norm 2', total_norm)
+
+                sys.exit()
+                # Step
                 optimizer_A.step()
 
                 batches_done = epoch_pre * len(dataloader_train) + i
