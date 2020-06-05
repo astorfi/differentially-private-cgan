@@ -84,6 +84,64 @@ if torch.cuda.is_available() and not opt.cuda:
 # Activate CUDA
 device = torch.device("cuda:0" if opt.cuda else "cpu")
 
+
+#########################
+######## Privacy ########
+#########################
+
+def _set_seed(secure_seed: int):
+    if secure_seed is not None:
+        secure_seed = secure_seed
+    else:
+        secure_seed = int.from_bytes(
+            os.urandom(8), byteorder="big", signed=True
+        )
+    return secure_seed
+
+# Generate secure seed
+secure_seed = _set_seed(None)
+
+# Secure generator
+_secure_generator = (
+    torch.random.manual_seed(secure_seed)
+    if device.type == "cpu"
+    else torch.cuda.manual_seed(secure_seed)
+)
+
+# Generate noise
+def _generate_noise(max_norm, parameter):
+    if opt.noise_multiplier > 0:
+        return torch.normal(
+            0,
+            opt.noise_multiplier * max_norm,
+            parameter.grad.shape,
+            device=device,
+            generator=_secure_generator,
+        )
+    return 0.0
+
+
+def enforce_privacy(model):
+    # Calculate norm
+    total_norm = 0
+    for param in model.parameters():
+        if param.requires_grad:
+            total_norm += param.grad.data.norm(2).item() ** 2
+    total_norm = total_norm ** .5
+    clip_val = min(opt.max_per_sample_grad_norm / (total_norm + 1e-6), 1.)
+
+    # Clip grads
+    for param in model.parameters():
+        if param.requires_grad:
+            # in-place multiplication with coefficient
+            param.grad.data.mul_(clip_val)
+
+    # Adding noise
+    params = (p for p in model.parameters() if p.requires_grad)
+    for p in params:
+        noise = _generate_noise(clip_val, p)
+        p.grad += noise
+
 ##########################
 ### Dataset Processing ###
 ##########################
@@ -546,46 +604,11 @@ if opt.training:
                 # Backward
                 a_loss.backward()
 
-                ################### Privacy #################
-                def _generate_noise(max_norm, parameter):
-                    if opt.noise_multiplier > 0:
-                        return torch.normal(
-                            0,
-                            opt.noise_multiplier * max_norm,
-                            parameter.grad.shape,
-                            device=device,
-                            generator=self.secure_generator,
-                        )
-                    return 0.0
+                ################### Privacy ################
 
+                # Privacy step
+                enforce_privacy(autoencoderModel)
 
-                # Calculate norm
-                total_norm = 0
-                for param in autoencoderModel.parameters():
-                    if param.requires_grad:
-                        total_norm += param.grad.data.norm(2).item() ** 2
-                total_norm = total_norm ** .5
-                clip_coef = min(opt.max_per_sample_grad_norm / (total_norm + 1e-6), 1.)
-                print('total_norm 1', total_norm)
-
-                # Clip grads
-                for param in autoencoderModel.parameters():
-                    if param.requires_grad:
-                        param.grad.data.mul_(clip_coef)
-
-                # params = (p for p in autoencoderModel.parameters() if p.requires_grad)
-                # for p in params:
-                #     noise = self._generate_noise(clip_value, p)
-                #     p.grad += noise
-
-                for param in autoencoderModel.parameters():
-                    if param.requires_grad:
-                        total_norm += param.grad.data.norm(2).item() ** 2
-                total_norm = total_norm ** .5
-                clip_coef = min(opt.max_per_sample_grad_norm / (total_norm + 1e-6), 1.)
-                print('total_norm 2', total_norm)
-
-                sys.exit()
                 # Step
                 optimizer_A.step()
 
