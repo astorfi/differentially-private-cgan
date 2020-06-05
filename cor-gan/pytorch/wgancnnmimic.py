@@ -1,31 +1,15 @@
 import argparse
-import os
 import numpy as np
-import math
 import time
 import random
-
-import matplotlib.pyplot as plt
-
 import os
-from subprocess import call
-
-import torchvision.transforms as transforms
-from torchvision.utils import save_image
-from torchvision.utils import make_grid
-
-# import matplotlib
-# matplotlib.use('GTK3Agg')
 import matplotlib.pyplot as plt
-
 from torch.utils.data import DataLoader
-from torchvision import datasets
 from torch.autograd import Variable
 import torch.backends.cudnn as cudnn
-
 import torch.nn as nn
-import torch.nn.functional as F
 import torch
+import math
 
 parser = argparse.ArgumentParser()
 
@@ -65,12 +49,12 @@ parser.add_argument("--epoch_time_show", type=bool, default=True, help="interval
 parser.add_argument("--epoch_save_model_freq", type=int, default=10, help="number of epops per model save")
 parser.add_argument("--minibatch_averaging", type=bool, default=False, help="Minibatch averaging")
 
-parser.add_argument("--pretrained_status", type=bool, default=True, help="If want to use ae pretrained weights")
-parser.add_argument("--training", type=bool, default=True, help="Training status")
+parser.add_argument("--pretrained_status", type=bool, default=False, help="If want to use ae pretrained weights")
+parser.add_argument("--training", type=bool, default=False, help="Training status")
 parser.add_argument("--resume", type=bool, default=False, help="Training status")
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
-parser.add_argument("--generate", type=bool, default=False, help="Generating Sythetic Data")
-parser.add_argument("--evaluate", type=bool, default=False, help="Evaluation status")
+parser.add_argument("--generate", type=bool, default=True, help="Generating Sythetic Data")
+parser.add_argument("--evaluate", type=bool, default=True, help="Evaluation status")
 parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/model/' + experimentName),
                     help="Training status")
 opt = parser.parse_args()
@@ -279,40 +263,6 @@ class Generator(nn.Module):
         return torch.squeeze(out)
 
 
-# class Discriminator(nn.Module):
-#     def __init__(self):
-#         super(Discriminator, self).__init__()
-#
-#         # Discriminator's parameters
-#         self.disDim = 256
-#
-#         # The minibatch averaging setup
-#         ma_coef = 1
-#         if opt.minibatch_averaging:
-#             ma_coef = ma_coef * 2
-#
-#         self.model = nn.Sequential(
-#             nn.Linear(ma_coef * dataset_train_object.featureSize, self.disDim),
-#             nn.ReLU(True),
-#             nn.Linear(self.disDim, int(self.disDim)),
-#             nn.ReLU(True),
-#             nn.Linear(self.disDim, int(self.disDim)),
-#             nn.ReLU(True),
-#             nn.Linear(int(self.disDim), 1)
-#         )
-#
-#     def forward(self, x):
-#
-#         if opt.minibatch_averaging:
-#             ### minibatch averaging ###
-#             x_mean = torch.mean(x, 0).repeat(x.shape[0], 1)  # Average over the batch
-#             x = torch.cat((x, x_mean), 1)  # Concatenation
-#
-#         # Feeding the model
-#         output = self.model(x)
-#         return output
-
-
 class Discriminator(nn.Module):
     def __init__(self):
         super(Discriminator, self).__init__()
@@ -421,35 +371,17 @@ def calc_gradient_penalty(netD, real_data, fake_data):
     return gradient_penalty
 
 
-def generator_loss(y_fake, y_true):
-    """
-    Gen loss
-    Can be replaced with generator_loss = torch.nn.BCELoss(). Think why?
-    """
-    epsilon = 1e-12
-    return -0.5 * torch.mean(torch.log(y_fake + epsilon))
-
-
 def autoencoder_loss(x_output, y_target):
     """
     autoencoder_loss
     This implementation is equivalent to the following:
     torch.nn.BCELoss(reduction='sum') / batch_size
     As our matrix is too sparse, first we will take a sum over the features and then do the mean over the batch.
-    WARNING: This is NOT equivalent to torch.nn.BCELoss(reduction='mean') as the later on, mean over both features and batches.
+    WARNING: This is NOT equivalent to torch.nn.BCELoss(reduction='mean') as the latter one, mean over both features and batches.
     """
     epsilon = 1e-12
     term = y_target * torch.log(x_output + epsilon) + (1. - y_target) * torch.log(1. - x_output + epsilon)
     loss = torch.mean(-torch.sum(term, 1), 0)
-    return loss
-
-
-def discriminator_loss(outputs):
-    """
-    autoencoder_loss
-    Cab be replaced with discriminator_loss = torch.nn.BCELoss(). Think why?
-    """
-    loss = torch.mean((1 - labels) * outputs) - torch.mean(labels * outputs)
     return loss
 
 
@@ -792,42 +724,6 @@ if opt.training:
             # ls -d -1tr /home/sina/experiments/pytorch/model/* | head -n -10 | xargs -d '\n' rm -f
             # call("ls -d -1tr " + opt.expPATH + "/*" + " | head -n -10 | xargs -d '\n' rm -f", shell=True)
 
-if opt.finetuning:
-
-    # Loading the checkpoint
-    checkpoint = torch.load(os.path.join(opt.PATH, "model_epoch_200.pth"))
-
-    # Setup model
-    generatorModel = Generator()
-    discriminatorModel = Discriminator()
-
-    if cuda:
-        generatorModel.cuda()
-        discriminatorModel.cuda()
-        discriminator_loss.cuda()
-
-    # Setup optimizers
-    optimizer_G = torch.optim.Adam(generatorModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
-    optimizer_D = torch.optim.Adam(discriminatorModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
-
-    # Load models
-    generatorModel.load_state_dict(checkpoint['Generator_state_dict'])
-    discriminatorModel.load_state_dict(checkpoint['Discriminator_state_dict'])
-
-    # Load optimizers
-    optimizer_G.load_state_dict(checkpoint['optimizer_G_state_dict'])
-    optimizer_D.load_state_dict(checkpoint['optimizer_D_state_dict'])
-
-    # Load losses
-    g_loss = checkpoint['g_loss']
-    d_loss = checkpoint['d_loss']
-
-    # Load epoch number
-    epoch = checkpoint['epoch']
-
-    generatorModel.eval()
-    discriminatorModel.eval()
-
 if opt.generate:
 
     # Check cuda
@@ -842,7 +738,7 @@ if opt.generate:
     #####################################
 
     # Loading the checkpoint
-    checkpoint = torch.load(os.path.join(opt.expPATH, "model_epoch_100.pth"))
+    checkpoint = torch.load(os.path.join(opt.expPATH, "model_epoch_10.pth"))
 
     # Load models
     generatorModel.load_state_dict(checkpoint['Generator_state_dict'])
@@ -886,6 +782,40 @@ if opt.generate:
     # ave synthetic data
     np.save(os.path.join(opt.expPATH, "synthetic.npy"), gen_samples, allow_pickle=False)
 
+
+
+###################
+### Evaluation ####
+###################
+# MMD: https://github.com/xuqiantong/GAN-Metrics
+def distance(X, Y, sqrt):
+    nX = X.size(0)
+    nY = Y.size(0)
+    X = X.view(nX, -1).cuda()
+    X2 = (X * X).sum(1).resize_(nX, 1)
+    Y = Y.view(nY, -1).cuda()
+    Y2 = (Y * Y).sum(1).resize_(nY, 1)
+
+    M = torch.zeros(nX, nY)
+    M.copy_(X2.expand(nX, nY) + Y2.expand(nY, nX).transpose(0, 1) - 2 * torch.mm(X, Y.transpose(0, 1)))
+
+    del X, X2, Y, Y2
+
+    if sqrt:
+        M = ((M + M.abs()) / 2).sqrt()
+
+    return M
+
+def mmd(Mxx, Mxy, Myy, sigma) :
+    scale = Mxx.mean()
+    Mxx = torch.exp(-Mxx/(scale*2*sigma*sigma))
+    Mxy = torch.exp(-Mxy/(scale*2*sigma*sigma))
+    Myy = torch.exp(-Myy/(scale*2*sigma*sigma))
+    a = Mxx.mean()+Myy.mean()-2*Mxy.mean()
+    mmd = math.sqrt(max(a, 0))
+
+    return mmd
+
 if opt.evaluate:
     # Load synthetic data
     gen_samples = np.load(os.path.join(opt.expPATH, "synthetic.npy"), allow_pickle=False)
@@ -907,3 +837,38 @@ if opt.evaluate:
     # plt.xlabel('x')
     # plt.ylabel('y')
     plt.show()
+
+
+    #### Kolmogorov-Smirnov test ###
+    # Ref: https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.stats.ks_2samp.html
+    from scipy import stats
+    rvs1 = gen_samples[0]
+    rvs2 = real_samples[0]
+    pvalue_acum = 0
+    for i in range(gen_samples.shape[0]):
+        stat, pvalue = stats.ks_2samp(rvs1, rvs2)
+        pvalue_acum += pvalue
+    print('KS test pvalue',pvalue_acum / float(gen_samples.shape[0]))
+
+
+    # ref: https://docs.scipy.org/doc/scipy-0.15.1/reference/generated/scipy.stats.ks_2samp.html
+    # This is a two-sided test for the null hypothesis that 2 independent samples are drawn from the same continuous distribution.
+    from scipy import stats
+    import torch_two_sample
+    real_samples = torch.from_numpy(real_samples).float().to(device)
+    gen_samples = torch.from_numpy(gen_samples).float().to(device)
+
+    real = real_samples
+    fake = gen_samples
+    Mxx = distance(real, real, False)
+    Mxy = distance(real, fake, False)
+    Myy = distance(fake, fake, False)
+
+    sigma = 1
+    print('Manual MMD: ', mmd(Mxx, Mxy, Myy, sigma))
+
+    # Package
+    mmd = torch_two_sample.statistics_diff.MMDStatistic(10000, 10000)
+    test_stat = mmd(real_samples, gen_samples,
+                          alphas = [0.5], ret_matrix = False)
+    print('Pytorch package MMD: ', test_stat)
