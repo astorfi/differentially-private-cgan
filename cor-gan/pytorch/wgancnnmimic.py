@@ -873,6 +873,7 @@ if opt.evaluate:
             prediction = np.full(y_test.shape, val)
         """
 
+        # zero_division=1 is very important to use
         return score(y_test, prediction.round(), zero_division=1)
 
     def feature_prediction_evaluation(
