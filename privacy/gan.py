@@ -227,7 +227,6 @@ feature_size = random_samples.size()[1]
 totalsamples = len(dataset_train_object)
 num_batches = len(dataloader_train)
 iterations = opt.n_epochs_pretrain * num_batches
-print(iterations)
 print('Achieves ({}, {})-DP'.format(
         analysis.epsilon(
             totalsamples,
@@ -238,8 +237,6 @@ print('Achieves ({}, {})-DP'.format(
         ),
         opt.delta,
     ))
-
-sys.exit()
 ####################
 ### Architecture ###
 ####################
@@ -574,7 +571,7 @@ optimizer_G = torch.optim.Adam(g_params, lr=opt.lr, betas=(opt.b1, opt.b2), weig
 optimizer_D = dp_optimizer.AdamDP(
         max_per_sample_grad_norm=opt.max_per_sample_grad_norm,
         noise_multiplier=opt.noise_multiplier,
-        minibatch_size=opt.batch_size,
+        batch_size=opt.batch_size,
         params=discriminatorModel.parameters(),
         lr=opt.lr,
         betas=(opt.b1, opt.b2),
@@ -584,7 +581,7 @@ optimizer_D = dp_optimizer.AdamDP(
 optimizer_A = dp_optimizer.AdamDP(
         max_per_sample_grad_norm=opt.max_per_sample_grad_norm,
         noise_multiplier=opt.noise_multiplier,
-        minibatch_size=opt.batch_size,
+        batch_size=opt.batch_size,
         params=autoencoderModel.parameters(),
         lr=opt.lr,
         betas=(opt.b1, opt.b2),

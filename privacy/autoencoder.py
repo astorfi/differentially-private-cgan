@@ -170,7 +170,6 @@ feature_size = random_samples.size()[1]
 totalsamples = len(dataset_train_object)
 num_batches = len(dataloader_train)
 iterations = opt.n_epochs_pretrain * num_batches
-print(iterations)
 print('Achieves ({}, {})-DP'.format(
         analysis.epsilon(
             totalsamples,
