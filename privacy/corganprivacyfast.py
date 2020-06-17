@@ -10,6 +10,7 @@ import torch.backends.cudnn as cudnn
 import torch.nn as nn
 import torch
 import math
+import dp_optimizer
 
 parser = argparse.ArgumentParser()
 
@@ -21,9 +22,9 @@ parser.add_argument("--DATASETPATH", type=str,
                     help="Dataset file")
 
 parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
-parser.add_argument("--n_epochs_pretrain", type=int, default=100,
+parser.add_argument("--n_epochs_pretrain", type=int, default=20,
                     help="number of epochs of pretraining the autoencoder")
-parser.add_argument("--batch_size", type=int, default=1, help="size of the batches")
+parser.add_argument("--batch_size", type=int, default=64, help="size of the batches")
 parser.add_argument("--lr", type=float, default=0.001, help="adam: learning rate")
 parser.add_argument("--weight_decay", type=float, default=0.00001, help="l2 regularization")
 parser.add_argument("--b1", type=float, default=0.9, help="adam: decay of first order momentum of gradient")
@@ -44,7 +45,7 @@ parser.add_argument("--num_gpu", type=int, default=2, help="Number of GPUs in ca
 parser.add_argument("--latent_dim", type=int, default=128, help="dimensionality of the latent noise space")
 parser.add_argument("--feature_size", type=int, default=1071, help="size of each image dimension")
 parser.add_argument("--channels", type=int, default=1, help="number of image channels")
-parser.add_argument("--sample_interval", type=int, default=100, help="interval between samples")
+parser.add_argument("--sample_interval", type=int, default=1, help="interval between batches")
 parser.add_argument("--epoch_time_show", type=bool, default=True, help="interval betwen image samples")
 parser.add_argument("--epoch_save_model_freq", type=int, default=10, help="number of epops per model save")
 parser.add_argument("--minibatch_averaging", type=bool, default=False, help="Minibatch averaging")
@@ -54,7 +55,7 @@ parser.add_argument('--noise_multiplier', type=float, default=1.0)
 parser.add_argument('--max_per_sample_grad_norm', type=float, default=1.0)
 
 # Training/Testing
-parser.add_argument("--pretrained_status", type=bool, default=True, help="If want to use ae pretrained weights")
+parser.add_argument("--pretrained_status", type=bool, default=False, help="If want to use ae pretrained weights")
 parser.add_argument("--training", type=bool, default=True, help="Training status")
 parser.add_argument("--resume", type=bool, default=False, help="Training status")
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
@@ -121,7 +122,7 @@ def _generate_noise(max_norm, parameter):
     return 0.0
 
 
-def enforce_privacy(model):
+def clip_grads_(model):
     # Calculate norm
     total_norm = 0
     for param in model.parameters():
@@ -136,11 +137,35 @@ def enforce_privacy(model):
             # in-place multiplication with coefficient
             param.grad.data.mul_(clip_val)
 
+
+def add_noise_(model):
     # Adding noise
     params = (p for p in model.parameters() if p.requires_grad)
     for p in params:
-        noise = _generate_noise(clip_val, p)
+        noise = _generate_noise(opt.max_per_sample_grad_norm, p)
         p.grad += noise
+
+
+# def enforce_privacy(model):
+#     # Calculate norm
+#     total_norm = 0
+#     for param in model.parameters():
+#         if param.requires_grad:
+#             total_norm += param.grad.data.norm(2).item() ** 2
+#     total_norm = total_norm ** .5
+#     clip_val = min(opt.max_per_sample_grad_norm / (total_norm + 1e-6), 1.)
+#
+#     # Clip grads
+#     for param in model.parameters():
+#         if param.requires_grad:
+#             # in-place multiplication with coefficient
+#             param.grad.data.mul_(clip_val)
+#
+#     # Adding noise
+#     params = (p for p in model.parameters() if p.requires_grad)
+#     for p in params:
+#         noise = _generate_noise(clip_val, p)
+#         p.grad += noise
 
 ##########################
 ### Dataset Processing ###
@@ -548,6 +573,17 @@ optimizer_D = torch.optim.Adam(discriminatorModel.parameters(), lr=opt.lr, betas
 optimizer_A = torch.optim.Adam(autoencoderModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2),
                                weight_decay=opt.weight_decay)
 
+optimizer_A = dp_optimizer.DPAdam(
+        l2_norm_clip=opt.max_per_sample_grad_norm,
+        noise_multiplier=opt.noise_multiplier,
+        minibatch_size=opt.batch_size,
+        microbatch_size=1,
+        params=autoencoderModel.parameters(),
+        lr=opt.lr,
+        betas=(opt.b1, opt.b2),
+        weight_decay=0.0001,
+    )
+
 ################
 ### TRAINING ###
 ################
@@ -587,36 +623,45 @@ if opt.training:
 
     if not opt.pretrained_status:
         for epoch_pre in range(opt.n_epochs_pretrain):
-            for i, samples in enumerate(dataloader_train):
+            for i_batch, samples in enumerate(dataloader_train):
 
                 # Configure input
                 real_samples = Variable(samples.type(Tensor))
 
-                # Generate a batch of images
-                recons_samples = autoencoderModel(real_samples)
-
-                # Loss measures generator's ability to fool the discriminator
-                a_loss = autoencoder_loss(recons_samples, real_samples)
-
                 # # Reset gradients (if you comment below line, it would be a mess. Think why?!!!!!!!!!)
                 optimizer_A.zero_grad()
 
-                # Backward
-                a_loss.backward()
+                # Microbatch processing
+                for i in range(opt.batch_size):
 
-                ################### Privacy ################
+                    # Extract microbatch
+                    micro_batch = real_samples[i:i+1,:]
 
-                # Privacy step
-                enforce_privacy(autoencoderModel)
+                    # Reset grads
+                    optimizer_A.zero_microbatch_grad()
+
+                    # Generate a batch of images
+                    recons_samples = autoencoderModel(micro_batch)
+
+                    # Loss measures generator's ability to fool the discriminator
+                    a_loss = autoencoder_loss(recons_samples, micro_batch)
+
+                    # Backward
+                    a_loss.backward()
+
+                    # Bound sensitivity
+                    optimizer_A.microbatch_step()
+
+                    ################### Privacy ################
 
                 # Step
                 optimizer_A.step()
 
-                batches_done = epoch_pre * len(dataloader_train) + i
+                batches_done = epoch_pre * len(dataloader_train) + i_batch + 1
                 if batches_done % opt.sample_interval == 0:
                     print(
                         "[Epoch %d/%d of pretraining] [Batch %d/%d] [A loss: %.3f]"
-                        % (epoch_pre + 1, opt.n_epochs_pretrain, i, len(dataloader_train), a_loss.item())
+                        % (epoch_pre + 1, opt.n_epochs_pretrain, i_batch+1, len(dataloader_train), a_loss.item())
                         , flush=True)
 
         torch.save({

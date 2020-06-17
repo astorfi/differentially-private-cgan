@@ -139,7 +139,7 @@ def enforce_privacy(model):
     # Adding noise
     params = (p for p in model.parameters() if p.requires_grad)
     for p in params:
-        noise = _generate_noise(clip_val, p)
+        noise = _generate_noise(opt.max_per_sample_grad_norm, p)
         p.grad += noise
 
 ##########################
