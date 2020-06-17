@@ -45,7 +45,7 @@ parser.add_argument("--num_gpu", type=int, default=2, help="Number of GPUs in ca
 parser.add_argument("--latent_dim", type=int, default=128, help="dimensionality of the latent noise space")
 parser.add_argument("--feature_size", type=int, default=1071, help="size of each image dimension")
 parser.add_argument("--channels", type=int, default=1, help="number of image channels")
-parser.add_argument("--sample_interval", type=int, default=1, help="interval between batches")
+parser.add_argument("--sample_interval", type=int, default=10, help="interval between batches")
 parser.add_argument("--epoch_time_show", type=bool, default=True, help="interval betwen image samples")
 parser.add_argument("--epoch_save_model_freq", type=int, default=10, help="number of epops per model save")
 parser.add_argument("--minibatch_averaging", type=bool, default=False, help="Minibatch averaging")
@@ -770,9 +770,11 @@ if opt.training:
             optimizer_G.step()
             gen_iterations += 1
 
-        print('TRAIN: [Epoch %d/%d] [Batch %d/%d] Loss_D: %.6f Loss_G: %.6f Loss_D_real: %.6f Loss_D_fake %.6f'
-              % (epoch + 1, opt.n_epochs, i_batch, len(dataloader_train),
-                 errD.item(), errG.item(), errD_real.item(), errD_fake.item()), flush=True)
+            batches_done = epoch * len(dataloader_train) + i_batch + 1
+            if batches_done % opt.sample_interval == 0:
+                print('TRAIN: [Epoch %d/%d] [Batch %d/%d] Loss_D: %.6f Loss_G: %.6f Loss_D_real: %.6f Loss_D_fake %.6f'
+                      % (epoch + 1, opt.n_epochs, i_batch, len(dataloader_train),
+                         errD.item(), errG.item(), errD_real.item(), errD_fake.item()), flush=True)
 
         # End of epoch
         epoch_end = time.time()
