@@ -16,6 +16,7 @@ parser = argparse.ArgumentParser()
 
 # experimentName is the current file name without extension
 experimentName = os.path.splitext(os.path.basename(__file__))[0]
+experimentName = 'rdp'
 
 parser.add_argument("--DATASETPATH", type=str,
                     default=os.path.expanduser('~/data/MIMIC/processed/out_binary.matrix'),
@@ -61,14 +62,16 @@ parser.add_argument("--resume", type=bool, default=False, help="Training status"
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
 parser.add_argument("--generate", type=bool, default=False, help="Generating Sythetic Data")
 parser.add_argument("--evaluate", type=bool, default=False, help="Evaluation status")
-parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/model/' + experimentName),
-                    help="Training status")
+parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/' + experimentName),
+                    help="Experiment path")
+parser.add_argument("--modelPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/' + experimentName + '/model'),
+                    help="Model path")
 opt = parser.parse_args()
 print(opt)
 
 # Create experiments DIR
 if not os.path.exists(opt.expPATH):
-    os.system('mkdir {0}'.format(opt.expPATH))
+    os.system('mkdir -p {0}'.format(opt.expPATH))
 
 # Random seed for pytorch
 opt.manualSeed = random.randint(1, 10000)  # fix seed
@@ -574,230 +577,9 @@ optimizer_A = dp_optimizer.DPAdam(
         weight_decay=0.0001,
     )
 
-################
-### TRAINING ###
-################
-if opt.training:
-
-    if opt.resume:
-        #####################################
-        #### Load model and optimizer #######
-        #####################################
-
-        # Loading the checkpoint
-        checkpoint = torch.load(os.path.join(opt.PATH, "model_epoch_1000.pth"))
-
-        # Load models
-        generatorModel.load_state_dict(checkpoint['Generator_state_dict'])
-        discriminatorModel.load_state_dict(checkpoint['Discriminator_state_dict'])
-        autoencoderModel.load_state_dict(checkpoint['Autoencoder_state_dict'])
-        autoencoderDecoder.load_state_dict(checkpoint['Autoencoder_Decoder_state_dict'])
-
-        # Load optimizers
-        optimizer_G.load_state_dict(checkpoint['optimizer_G_state_dict'])
-        optimizer_D.load_state_dict(checkpoint['optimizer_D_state_dict'])
-        optimizer_A.load_state_dict(checkpoint['optimizer_A_state_dict'])
-
-        # Load losses
-        g_loss = checkpoint['g_loss']
-        d_loss = checkpoint['d_loss']
-        a_loss = checkpoint['a_loss']
-
-        # Load epoch number
-        epoch = checkpoint['epoch']
-
-        generatorModel.eval()
-        discriminatorModel.eval()
-        autoencoderModel.eval()
-        autoencoderDecoder.eval()
-
-    if not opt.pretrained_status:
-        for epoch_pre in range(opt.n_epochs_pretrain):
-            for i_batch, samples in enumerate(dataloader_train):
-
-                # Configure input
-                real_samples = Variable(samples.type(Tensor))
-
-                # # Reset gradients (if you comment below line, it would be a mess. Think why?!!!!!!!!!)
-                optimizer_A.zero_grad()
-
-                # Microbatch processing
-                for i in range(opt.batch_size):
-
-                    # Extract microbatch
-                    micro_batch = real_samples[i:i+1,:]
-
-                    # Reset grads
-                    optimizer_A.zero_microbatch_grad()
-
-                    # Generate a batch of images
-                    recons_samples = autoencoderModel(micro_batch)
-
-                    # Loss measures generator's ability to fool the discriminator
-                    a_loss = autoencoder_loss(recons_samples, micro_batch)
-
-                    # Backward
-                    a_loss.backward()
-
-                    # Bound sensitivity
-                    optimizer_A.microbatch_step()
-
-                    ################### Privacy ################
-
-                # Step
-                optimizer_A.step()
-
-                batches_done = epoch_pre * len(dataloader_train) + i_batch + 1
-                if batches_done % opt.sample_interval == 0:
-                    print(
-                        "[Epoch %d/%d of pretraining] [Batch %d/%d] [A loss: %.3f]"
-                        % (epoch_pre + 1, opt.n_epochs_pretrain, batches_done, len(dataloader_train), a_loss.item())
-                        , flush=True)
-
-        torch.save({
-            'Autoencoder_state_dict': autoencoderModel.state_dict(),
-            'optimizer_A_state_dict': optimizer_A.state_dict(),
-        }, os.path.join(opt.expPATH, "aepretrained.pth"))
-    else:
-
-        print('loading pretrained autoencoder...')
-
-        # Loading the checkpoint
-        checkpoint = torch.load(os.path.join(opt.expPATH, "aepretrained.pth"))
-
-        # Load models
-        autoencoderModel.load_state_dict(checkpoint['Autoencoder_state_dict'])
-
-        # Load optimizers
-        optimizer_A.load_state_dict(checkpoint['optimizer_A_state_dict'])
-
-        # Load weights
-        autoencoderModel.eval()
-
-    gen_iterations = 0
-    for epoch in range(opt.n_epochs):
-        epoch_start = time.time()
-        for i_batch, samples in enumerate(dataloader_train):
-
-            # ---------------------
-            #  Train Discriminator
-            # ---------------------
-
-            # Configure input
-            real_samples = Variable(samples.type(Tensor))
-
-            # reset gradients of discriminator
-            optimizer_D.zero_grad()
-
-            # Microbatch processing
-            for i in range(opt.batch_size):
-                # Extract microbatch
-                micro_batch = real_samples[i:i + 1, :]
-
-                for p in discriminatorModel.parameters():  # reset requires_grad
-                    p.requires_grad = True
-
-                # Error on real samples
-                errD_real = torch.mean(discriminatorModel(micro_batch), dim=0)
-                errD_real.backward(one)
-
-                # Measure discriminator's ability to classify real from generated samples
-                # The detach() method constructs a new view on a tensor which is declared
-                # not to need gradients, i.e., it is to be excluded from further tracking of
-                # operations, and therefore the subgraph involving this view is not recorded.
-                # Refer to http://www.bnikolic.co.uk/blog/pytorch-detach.html.
-
-                # Sample noise as generator input
-                z = torch.randn(samples.shape[0], opt.latent_dim, device=device)
-
-                # Generate a batch of images
-                fake = generatorModel(z)
-
-                fake_decoded = torch.squeeze(autoencoderDecoder(fake.unsqueeze(dim=2)), dim=1)
-                errD_fake = torch.mean(discriminatorModel(fake_decoded.detach()), dim=0)
-                errD_fake.backward(mone)
-
-                # Error
-                errD = errD_real - errD_fake
-                # errD.backward(one)
-
-            # Optimizer step
-            optimizer_D.step()
-
-            # clamp parameters to a cube
-            for p in discriminatorModel.parameters():
-                p.data.clamp_(opt.clamp_lower, opt.clamp_upper)
-
-            # -----------------
-            #  Train Generator
-            # -----------------
-
-            # We’re supposed to clear the gradients each iteration before calling loss.backward() and optimizer.step().
-            #
-            # In PyTorch, we need to set the gradients to zero before starting to do backpropragation because PyTorch
-            # accumulates the gradients on subsequent backward passes. This is convenient while training RNNs. So,
-            # the default action is to accumulate (i.e. sum) the gradients on every loss.backward() call.
-            #
-            # Because of this, when you start your training loop, ideally you should zero out the gradients so
-            # that you do the parameter update correctly. Else the gradient would point in some other direction
-            # than the intended direction towards the minimum (or maximum, in case of maximization objectives).
-
-            # Since the backward() function accumulates gradients, and you don’t want to mix up gradients between
-            # minibatches, you have to zero them out at the start of a new minibatch. This is exactly like how a general
-            # (additive) accumulator variable is initialized to 0 in code.
-            # WARNING. BE VERY CAREFUL about the backward aurguments: https://pytorch.org/tutorials/beginner/former_torchies/autograd_tutorial.html
-
-            for p in discriminatorModel.parameters():  # reset requires_grad
-                p.requires_grad = False
-
-            # Zero grads
-            optimizer_G.zero_grad()
-
-            # Sample noise as generator input
-            z = torch.randn(samples.shape[0], opt.latent_dim, device=device)
-
-            # Generate a batch of images
-            fake = generatorModel(z)
-
-            # uncomment if there is no autoencoder
-            fake_decoded = torch.squeeze(autoencoderDecoder(fake.unsqueeze(dim=2)),dim=1)
-
-            # Loss measures generator's ability to fool the discriminator
-            errG = torch.mean(discriminatorModel(fake_decoded), dim=0)
-            errG.backward(one)
-
-            # read more at https://discuss.pytorch.org/t/why-do-we-need-to-set-the-gradients-manually-to-zero-in-pytorch/4903/4
-            optimizer_G.step()
-            gen_iterations += 1
-
-            batches_done = epoch * len(dataloader_train) + i_batch + 1
-            if batches_done % opt.sample_interval == 0:
-                print('TRAIN: [Epoch %d/%d] [Batch %d/%d] Loss_D: %.6f Loss_G: %.6f Loss_D_real: %.6f Loss_D_fake %.6f'
-                      % (epoch + 1, opt.n_epochs, batches_done, len(dataloader_train),
-                         errD.item(), errG.item(), errD_real.item(), errD_fake.item()), flush=True)
-
-        # End of epoch
-        epoch_end = time.time()
-        if opt.epoch_time_show:
-            print("It has been {0} seconds for this epoch".format(epoch_end - epoch_start), flush=True)
-
-        if (epoch + 1) % opt.epoch_save_model_freq == 0:
-            # Refer to https://pytorch.org/tutorials/beginner/saving_loading_models.html
-            torch.save({
-                'epoch': epoch + 1,
-                'Generator_state_dict': generatorModel.state_dict(),
-                'Discriminator_state_dict': discriminatorModel.state_dict(),
-                'Autoencoder_state_dict': autoencoderModel.state_dict(),
-                'Autoencoder_Decoder_state_dict': autoencoderDecoder.state_dict(),
-                'optimizer_G_state_dict': optimizer_G.state_dict(),
-                'optimizer_D_state_dict': optimizer_D.state_dict(),
-                'optimizer_A_state_dict': optimizer_A.state_dict(),
-            }, os.path.join(opt.expPATH, "model_epoch_%d.pth" % (epoch + 1)))
-
-            # keep only the most recent 10 saved models
-            # ls -d -1tr /home/sina/experiments/pytorch/model/* | head -n -10 | xargs -d '\n' rm -f
-            # call("ls -d -1tr " + opt.expPATH + "/*" + " | head -n -10 | xargs -d '\n' rm -f", shell=True)
-
+###################
+#### Generate #####
+###################
 if opt.generate:
 
     # Check cuda

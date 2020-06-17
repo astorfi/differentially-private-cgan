@@ -16,6 +16,7 @@ parser = argparse.ArgumentParser()
 
 # experimentName is the current file name without extension
 experimentName = os.path.splitext(os.path.basename(__file__))[0]
+experimentName = 'rdp'
 
 parser.add_argument("--DATASETPATH", type=str,
                     default=os.path.expanduser('~/data/MIMIC/processed/out_binary.matrix'),
@@ -61,14 +62,16 @@ parser.add_argument("--resume", type=bool, default=False, help="Training status"
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
 parser.add_argument("--generate", type=bool, default=False, help="Generating Sythetic Data")
 parser.add_argument("--evaluate", type=bool, default=False, help="Evaluation status")
-parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/model/' + experimentName),
-                    help="Training status")
+parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/' + experimentName),
+                    help="Experiment path")
+parser.add_argument("--modelPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/' + experimentName + '/model'),
+                    help="Model path")
 opt = parser.parse_args()
 print(opt)
 
 # Create experiments DIR
 if not os.path.exists(opt.expPATH):
-    os.system('mkdir {0}'.format(opt.expPATH))
+    os.system('mkdir -p {0}'.format(opt.expPATH))
 
 # Random seed for pytorch
 opt.manualSeed = random.randint(1, 10000)  # fix seed
@@ -612,58 +615,13 @@ if opt.training:
         autoencoderDecoder.eval()
 
     if not opt.pretrained_status:
-        for epoch_pre in range(opt.n_epochs_pretrain):
-            for i_batch, samples in enumerate(dataloader_train):
-
-                # Configure input
-                real_samples = Variable(samples.type(Tensor))
-
-                # # Reset gradients (if you comment below line, it would be a mess. Think why?!!!!!!!!!)
-                optimizer_A.zero_grad()
-
-                # Microbatch processing
-                for i in range(opt.batch_size):
-
-                    # Extract microbatch
-                    micro_batch = real_samples[i:i+1,:]
-
-                    # Reset grads
-                    optimizer_A.zero_microbatch_grad()
-
-                    # Generate a batch of images
-                    recons_samples = autoencoderModel(micro_batch)
-
-                    # Loss measures generator's ability to fool the discriminator
-                    a_loss = autoencoder_loss(recons_samples, micro_batch)
-
-                    # Backward
-                    a_loss.backward()
-
-                    # Bound sensitivity
-                    optimizer_A.microbatch_step()
-
-                    ################### Privacy ################
-
-                # Step
-                optimizer_A.step()
-
-                batches_done = epoch_pre * len(dataloader_train) + i_batch + 1
-                if batches_done % opt.sample_interval == 0:
-                    print(
-                        "[Epoch %d/%d of pretraining] [Batch %d/%d] [A loss: %.3f]"
-                        % (epoch_pre + 1, opt.n_epochs_pretrain, batches_done, len(dataloader_train), a_loss.item())
-                        , flush=True)
-
-        torch.save({
-            'Autoencoder_state_dict': autoencoderModel.state_dict(),
-            'optimizer_A_state_dict': optimizer_A.state_dict(),
-        }, os.path.join(opt.expPATH, "aepretrained.pth"))
+        print('No pretrained autoencoder')
+        sys.exit()
     else:
-
         print('loading pretrained autoencoder...')
 
         # Loading the checkpoint
-        checkpoint = torch.load(os.path.join(opt.expPATH, "aepretrained.pth"))
+        checkpoint = torch.load(os.path.join(opt.modelPATH, "aepretrained.pth"))
 
         # Load models
         autoencoderModel.load_state_dict(checkpoint['Autoencoder_state_dict'])
@@ -792,7 +750,7 @@ if opt.training:
                 'optimizer_G_state_dict': optimizer_G.state_dict(),
                 'optimizer_D_state_dict': optimizer_D.state_dict(),
                 'optimizer_A_state_dict': optimizer_A.state_dict(),
-            }, os.path.join(opt.expPATH, "model_epoch_%d.pth" % (epoch + 1)))
+            }, os.path.join(opt.modelPATH, "model_epoch_%d.pth" % (epoch + 1)))
 
             # keep only the most recent 10 saved models
             # ls -d -1tr /home/sina/experiments/pytorch/model/* | head -n -10 | xargs -d '\n' rm -f
