@@ -345,7 +345,7 @@ optimizer_A = dp_optimizer.AdamDP(
         params=autoencoderModel.parameters(),
         lr=opt.lr,
         betas=(opt.b1, opt.b2),
-        weight_decay=0.0001,
+        weight_decay=opt.weight_decay,
     )
 
 ################
@@ -424,7 +424,7 @@ for epoch_pre in range(opt.n_epochs_pretrain):
         if batches_done % opt.sample_interval == 0:
             print(
                 "[Epoch %d/%d of pretraining] [Batch %d/%d] [A loss: %.3f]"
-                % (epoch_pre + 1, opt.n_epochs_pretrain, batches_done, len(dataloader_train), a_loss.item())
+                % (epoch_pre + 1, opt.n_epochs_pretrain, i_batch + 1, len(dataloader_train), a_loss.item())
                 , flush=True)
 
 torch.save({

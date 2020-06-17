@@ -10,23 +10,20 @@ import torch.backends.cudnn as cudnn
 import torch.nn as nn
 import torch
 import math
-import dp_optimizer
-import analysis
 
 parser = argparse.ArgumentParser()
 
 # experimentName is the current file name without extension
 experimentName = os.path.splitext(os.path.basename(__file__))[0]
-experimentName = 'rdp'
 
 parser.add_argument("--DATASETPATH", type=str,
                     default=os.path.expanduser('~/data/MIMIC/processed/out_binary.matrix'),
                     help="Dataset file")
 
 parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
-parser.add_argument("--n_epochs_pretrain", type=int, default=10,
+parser.add_argument("--n_epochs_pretrain", type=int, default=100,
                     help="number of epochs of pretraining the autoencoder")
-parser.add_argument("--batch_size", type=int, default=64, help="size of the batches")
+parser.add_argument("--batch_size", type=int, default=1, help="size of the batches")
 parser.add_argument("--lr", type=float, default=0.001, help="adam: learning rate")
 parser.add_argument("--weight_decay", type=float, default=0.00001, help="l2 regularization")
 parser.add_argument("--b1", type=float, default=0.9, help="adam: decay of first order momentum of gradient")
@@ -47,15 +44,14 @@ parser.add_argument("--num_gpu", type=int, default=2, help="Number of GPUs in ca
 parser.add_argument("--latent_dim", type=int, default=128, help="dimensionality of the latent noise space")
 parser.add_argument("--feature_size", type=int, default=1071, help="size of each image dimension")
 parser.add_argument("--channels", type=int, default=1, help="number of image channels")
-parser.add_argument("--sample_interval", type=int, default=10, help="interval between batches")
+parser.add_argument("--sample_interval", type=int, default=100, help="interval between samples")
 parser.add_argument("--epoch_time_show", type=bool, default=True, help="interval betwen image samples")
 parser.add_argument("--epoch_save_model_freq", type=int, default=10, help="number of epops per model save")
 parser.add_argument("--minibatch_averaging", type=bool, default=False, help="Minibatch averaging")
 
 #### Privacy
-parser.add_argument('--noise_multiplier', type=float, default=0.5)
+parser.add_argument('--noise_multiplier', type=float, default=1.0)
 parser.add_argument('--max_per_sample_grad_norm', type=float, default=1.0)
-parser.add_argument('--delta', type=float, default=1e-5, help="Target delta (default: 1e-5)")
 
 # Training/Testing
 parser.add_argument("--pretrained_status", type=bool, default=True, help="If want to use ae pretrained weights")
@@ -64,16 +60,14 @@ parser.add_argument("--resume", type=bool, default=False, help="Training status"
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
 parser.add_argument("--generate", type=bool, default=False, help="Generating Sythetic Data")
 parser.add_argument("--evaluate", type=bool, default=False, help="Evaluation status")
-parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/' + experimentName),
-                    help="Experiment path")
-parser.add_argument("--modelPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/' + experimentName + '/model'),
-                    help="Model path")
+parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/model/' + experimentName),
+                    help="Training status")
 opt = parser.parse_args()
 print(opt)
 
 # Create experiments DIR
 if not os.path.exists(opt.expPATH):
-    os.system('mkdir -p {0}'.format(opt.expPATH))
+    os.system('mkdir {0}'.format(opt.expPATH))
 
 # Random seed for pytorch
 opt.manualSeed = random.randint(1, 10000)  # fix seed
@@ -127,7 +121,7 @@ def _generate_noise(max_norm, parameter):
     return 0.0
 
 
-def clip_grads_(model):
+def enforce_privacy(model):
     # Calculate norm
     total_norm = 0
     for param in model.parameters():
@@ -142,14 +136,11 @@ def clip_grads_(model):
             # in-place multiplication with coefficient
             param.grad.data.mul_(clip_val)
 
-
-def add_noise_(model):
     # Adding noise
     params = (p for p in model.parameters() if p.requires_grad)
     for p in params:
-        noise = _generate_noise(opt.max_per_sample_grad_norm, p)
+        noise = _generate_noise(clip_val, p)
         p.grad += noise
-
 
 ##########################
 ### Dataset Processing ###
@@ -221,22 +212,7 @@ dataloader_test = DataLoader(dataset_test_object, batch_size=opt.batch_size,
 random_samples = next(iter(dataloader_test))
 feature_size = random_samples.size()[1]
 
-###########################
-## Privacy Calculation ####
-###########################
-totalsamples = len(dataset_train_object)
-num_batches = len(dataloader_train)
-iterations = opt.n_epochs_pretrain * num_batches
-print('Achieves ({}, {})-DP'.format(
-        analysis.epsilon(
-            totalsamples,
-            opt.batch_size,
-            opt.noise_multiplier,
-            iterations,
-            opt.delta
-        ),
-        opt.delta,
-    ))
+
 ####################
 ### Architecture ###
 ####################
@@ -567,26 +543,10 @@ g_params = [{'params': generatorModel.parameters()},
             {'params': autoencoderDecoder.parameters(), 'lr': 1e-4}]
 # g_params = list(generatorModel.parameters()) + list(autoencoderModel.decoder.parameters())
 optimizer_G = torch.optim.Adam(g_params, lr=opt.lr, betas=(opt.b1, opt.b2), weight_decay=opt.weight_decay)
-
-optimizer_D = dp_optimizer.AdamDP(
-        max_per_sample_grad_norm=opt.max_per_sample_grad_norm,
-        noise_multiplier=opt.noise_multiplier,
-        batch_size=opt.batch_size,
-        params=discriminatorModel.parameters(),
-        lr=opt.lr,
-        betas=(opt.b1, opt.b2),
-        weight_decay=0.0001,
-    )
-
-optimizer_A = dp_optimizer.AdamDP(
-        max_per_sample_grad_norm=opt.max_per_sample_grad_norm,
-        noise_multiplier=opt.noise_multiplier,
-        batch_size=opt.batch_size,
-        params=autoencoderModel.parameters(),
-        lr=opt.lr,
-        betas=(opt.b1, opt.b2),
-        weight_decay=0.0001,
-    )
+optimizer_D = torch.optim.Adam(discriminatorModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2),
+                               weight_decay=opt.weight_decay)
+optimizer_A = torch.optim.Adam(autoencoderModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2),
+                               weight_decay=opt.weight_decay)
 
 ################
 ### TRAINING ###
@@ -626,13 +586,49 @@ if opt.training:
         autoencoderDecoder.eval()
 
     if not opt.pretrained_status:
-        print('No pretrained autoencoder')
-        sys.exit()
+        for epoch_pre in range(opt.n_epochs_pretrain):
+            for i, samples in enumerate(dataloader_train):
+
+                # Configure input
+                real_samples = Variable(samples.type(Tensor))
+
+                # Generate a batch of images
+                recons_samples = autoencoderModel(real_samples)
+
+                # Loss measures generator's ability to fool the discriminator
+                a_loss = autoencoder_loss(recons_samples, real_samples)
+
+                # # Reset gradients (if you comment below line, it would be a mess. Think why?!!!!!!!!!)
+                optimizer_A.zero_grad()
+
+                # Backward
+                a_loss.backward()
+
+                ################### Privacy ################
+
+                # Privacy step
+                enforce_privacy(autoencoderModel)
+
+                # Step
+                optimizer_A.step()
+
+                batches_done = epoch_pre * len(dataloader_train) + i
+                if batches_done % opt.sample_interval == 0:
+                    print(
+                        "[Epoch %d/%d of pretraining] [Batch %d/%d] [A loss: %.3f]"
+                        % (epoch_pre + 1, opt.n_epochs_pretrain, i, len(dataloader_train), a_loss.item())
+                        , flush=True)
+
+        torch.save({
+            'Autoencoder_state_dict': autoencoderModel.state_dict(),
+            'optimizer_A_state_dict': optimizer_A.state_dict(),
+        }, os.path.join(opt.expPATH, "aepretrained.pth"))
     else:
+
         print('loading pretrained autoencoder...')
 
         # Loading the checkpoint
-        checkpoint = torch.load(os.path.join(opt.modelPATH, "aepretrained.pth"))
+        checkpoint = torch.load(os.path.join(opt.expPATH, "aepretrained.pth"))
 
         # Load models
         autoencoderModel.load_state_dict(checkpoint['Autoencoder_state_dict'])
@@ -646,7 +642,7 @@ if opt.training:
     gen_iterations = 0
     for epoch in range(opt.n_epochs):
         epoch_start = time.time()
-        for i_batch, samples in enumerate(dataloader_train):
+        for i, samples in enumerate(dataloader_train):
 
             # ---------------------
             #  Train Discriminator
@@ -655,19 +651,27 @@ if opt.training:
             # Configure input
             real_samples = Variable(samples.type(Tensor))
 
-            # reset gradients of discriminator
-            optimizer_D.zero_grad()
+            for p in discriminatorModel.parameters():  # reset requires_grad
+                p.requires_grad = True
 
-            # Microbatch processing
-            for i in range(opt.batch_size):
-                # Extract microbatch
-                micro_batch = real_samples[i:i + 1, :]
+            # train the discriminator n_iter_D times
+            if gen_iterations < 25 or gen_iterations % 500 == 0:
+                n_iter_D = 100
+            else:
+                n_iter_D = opt.n_iter_D
+            j = 0
+            while j < n_iter_D:
+                j += 1
 
-                for p in discriminatorModel.parameters():  # reset requires_grad
-                    p.requires_grad = True
+                # clamp parameters to a cube
+                for p in discriminatorModel.parameters():
+                    p.data.clamp_(opt.clamp_lower, opt.clamp_upper)
+
+                # reset gradients of discriminator
+                optimizer_D.zero_grad()
 
                 # Error on real samples
-                errD_real = torch.mean(discriminatorModel(micro_batch), dim=0)
+                errD_real = torch.mean(discriminatorModel(real_samples), dim=0)
                 errD_real.backward(one)
 
                 # Measure discriminator's ability to classify real from generated samples
@@ -690,16 +694,8 @@ if opt.training:
                 errD = errD_real - errD_fake
                 # errD.backward(one)
 
-                # Bounding sensitivity
-                optimizer_D.clip_grads_()
-
-            # Optimizer step
-            optimizer_D.add_noise_()
-            optimizer_D.step()
-
-            # clamp parameters to a cube
-            for p in discriminatorModel.parameters():
-                p.data.clamp_(opt.clamp_lower, opt.clamp_upper)
+                # Optimizer step
+                optimizer_D.step()
 
             # -----------------
             #  Train Generator
@@ -743,11 +739,39 @@ if opt.training:
             optimizer_G.step()
             gen_iterations += 1
 
-            batches_done = epoch * len(dataloader_train) + i_batch + 1
-            if batches_done % opt.sample_interval == 0:
-                print('TRAIN: [Epoch %d/%d] [Batch %d/%d] Loss_D: %.6f Loss_G: %.6f Loss_D_real: %.6f Loss_D_fake %.6f'
-                      % (epoch + 1, opt.n_epochs, i_batch + 1, len(dataloader_train),
-                         errD.item(), errG.item(), errD_real.item(), errD_fake.item()), flush=True)
+        # with torch.no_grad():
+        #
+        #     # Variables
+        #     real_samples_test = next(iter(dataloader_test))
+        #     real_samples_test = Variable(real_samples_test.type(Tensor))
+        #     z = torch.randn(samples.shape[0], opt.latent_dim, device=device)
+        #
+        #     # Generator
+        #     fake_samples_test_temp = generatorModel(z)
+        #     fake_samples_test = torch.squeeze(autoencoderDecoder(fake_samples_test_temp.unsqueeze(dim=2)))
+        #
+        #     # Discriminator
+        #     # F.sigmoid() is needed as the discriminator outputs are logits without any sigmoid.
+        #     out_real_test = discriminatorModel(real_samples_test).view(-1)
+        #     accuracy_real_test = discriminator_accuracy(F.sigmoid(out_real_test), valid)
+        #
+        #     out_fake_test = discriminatorModel(fake_samples_test.detach()).view(-1)
+        #     accuracy_fake_test = discriminator_accuracy(F.sigmoid(out_fake_test), fake)
+        #
+        #     # Test autoencoder
+        #     reconst_samples_test = autoencoderModel(real_samples_test)
+        #     a_loss_test = autoencoder_loss(reconst_samples_test, real_samples_test)
+
+        print('TRAIN: [Epoch %d/%d] [Batch %d/%d] Loss_D: %.6f Loss_G: %.6f Loss_D_real: %.6f Loss_D_fake %.6f'
+              % (epoch + 1, opt.n_epochs, i, len(dataloader_train),
+                 errD.item(), errG.item(), errD_real.item(), errD_fake.item()), flush=True)
+
+        # print(
+        #     "TEST: [Epoch %d/%d] [Batch %d/%d] [A loss: %.2f] [real accuracy: %.2f] [fake accuracy: %.2f]"
+        #     % (epoch + 1, opt.n_epochs, i, len(dataloader_train),
+        #        a_loss_test.item(), accuracy_real_test,
+        #        accuracy_fake_test)
+        #     , flush=True)
 
         # End of epoch
         epoch_end = time.time()
@@ -765,7 +789,7 @@ if opt.training:
                 'optimizer_G_state_dict': optimizer_G.state_dict(),
                 'optimizer_D_state_dict': optimizer_D.state_dict(),
                 'optimizer_A_state_dict': optimizer_A.state_dict(),
-            }, os.path.join(opt.modelPATH, "model_epoch_%d.pth" % (epoch + 1)))
+            }, os.path.join(opt.expPATH, "model_epoch_%d.pth" % (epoch + 1)))
 
             # keep only the most recent 10 saved models
             # ls -d -1tr /home/sina/experiments/pytorch/model/* | head -n -10 | xargs -d '\n' rm -f
