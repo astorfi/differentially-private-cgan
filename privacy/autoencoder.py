@@ -11,6 +11,7 @@ import torch.nn as nn
 import torch
 import math
 import dp_optimizer
+from torch.nn.utils import clip_grad_norm_
 
 parser = argparse.ArgumentParser()
 
@@ -321,7 +322,7 @@ autoencoderModel.apply(weights_init)
 optimizer_A = dp_optimizer.AdamDP(
         max_per_sample_grad_norm=opt.max_per_sample_grad_norm,
         noise_multiplier=opt.noise_multiplier,
-        minibatch_size=opt.batch_size,
+        batch_size=opt.batch_size,
         params=autoencoderModel.parameters(),
         lr=opt.lr,
         betas=(opt.b1, opt.b2),
@@ -380,7 +381,7 @@ for epoch_pre in range(opt.n_epochs_pretrain):
             micro_batch = real_samples[i:i+1,:]
 
             # Reset grads
-            optimizer_A.zero_microbatch_grad()
+            optimizer_A.zero_grad()
 
             # Generate a batch of images
             recons_samples = autoencoderModel(micro_batch)
