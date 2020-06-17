@@ -11,6 +11,8 @@ import torch.nn as nn
 import torch
 import math
 import dp_optimizer
+from torch.nn.utils import clip_grad_norm_
+import analysis
 
 parser = argparse.ArgumentParser()
 
@@ -21,7 +23,7 @@ experimentName = 'rdp'
 parser.add_argument("--DATASETPATH", type=str,
                     default=os.path.expanduser('~/data/MIMIC/processed/out_binary.matrix'),
                     help="Dataset file")
-parser.add_argument("--n_epochs_pretrain", type=int, default=1,
+parser.add_argument("--n_epochs_pretrain", type=int, default=10,
                     help="number of epochs of pretraining the autoencoder")
 parser.add_argument("--batch_size", type=int, default=64, help="size of the batches")
 parser.add_argument("--lr", type=float, default=0.001, help="adam: learning rate")
@@ -50,8 +52,9 @@ parser.add_argument("--epoch_save_model_freq", type=int, default=10, help="numbe
 parser.add_argument("--minibatch_averaging", type=bool, default=False, help="Minibatch averaging")
 
 #### Privacy
-parser.add_argument('--noise_multiplier', type=float, default=1.0)
+parser.add_argument('--noise_multiplier', type=float, default=10.0)
 parser.add_argument('--max_per_sample_grad_norm', type=float, default=1.0)
+parser.add_argument('--delta', type=float, default=1e-5, help="Target delta (default: 1e-5)")
 
 # Training/Testing
 parser.add_argument("--training", type=bool, default=True, help="Training status")
@@ -160,6 +163,26 @@ dataloader_test = DataLoader(dataset_test_object, batch_size=opt.batch_size,
 random_samples = next(iter(dataloader_test))
 feature_size = random_samples.size()[1]
 
+
+###########################
+## Privacy Calculation ####
+###########################
+totalsamples = len(dataset_train_object)
+num_batches = len(dataloader_train)
+iterations = opt.n_epochs_pretrain * num_batches
+print(iterations)
+print('Achieves ({}, {})-DP'.format(
+        analysis.epsilon(
+            totalsamples,
+            opt.batch_size,
+            opt.noise_multiplier,
+            iterations,
+            opt.delta
+        ),
+        opt.delta,
+    ))
+
+sys.exit()
 
 ####################
 ### Architecture ###
@@ -319,10 +342,9 @@ autoencoderModel.apply(weights_init)
 
 # Optimizers
 optimizer_A = dp_optimizer.AdamDP(
-        l2_norm_clip=opt.max_per_sample_grad_norm,
+        max_per_sample_grad_norm=opt.max_per_sample_grad_norm,
         noise_multiplier=opt.noise_multiplier,
-        minibatch_size=opt.batch_size,
-        microbatch_size=1,
+        batch_size=opt.batch_size,
         params=autoencoderModel.parameters(),
         lr=opt.lr,
         betas=(opt.b1, opt.b2),
@@ -381,7 +403,7 @@ for epoch_pre in range(opt.n_epochs_pretrain):
             micro_batch = real_samples[i:i+1,:]
 
             # Reset grads
-            optimizer_A.zero_microbatch_grad()
+            optimizer_A.zero_grad()
 
             # Generate a batch of images
             recons_samples = autoencoderModel(micro_batch)
@@ -393,11 +415,12 @@ for epoch_pre in range(opt.n_epochs_pretrain):
             a_loss.backward()
 
             # Bound sensitivity
-            optimizer_A.microbatch_step()
+            optimizer_A.clip_grads_()
 
             ################### Privacy ################
 
         # Step
+        optimizer_A.add_noise_()
         optimizer_A.step()
 
         batches_done = epoch_pre * len(dataloader_train) + i_batch + 1
