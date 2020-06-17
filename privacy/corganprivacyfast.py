@@ -22,7 +22,7 @@ parser.add_argument("--DATASETPATH", type=str,
                     help="Dataset file")
 
 parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
-parser.add_argument("--n_epochs_pretrain", type=int, default=20,
+parser.add_argument("--n_epochs_pretrain", type=int, default=10,
                     help="number of epochs of pretraining the autoencoder")
 parser.add_argument("--batch_size", type=int, default=64, help="size of the batches")
 parser.add_argument("--lr", type=float, default=0.001, help="adam: learning rate")
@@ -55,7 +55,7 @@ parser.add_argument('--noise_multiplier', type=float, default=1.0)
 parser.add_argument('--max_per_sample_grad_norm', type=float, default=1.0)
 
 # Training/Testing
-parser.add_argument("--pretrained_status", type=bool, default=False, help="If want to use ae pretrained weights")
+parser.add_argument("--pretrained_status", type=bool, default=True, help="If want to use ae pretrained weights")
 parser.add_argument("--training", type=bool, default=True, help="Training status")
 parser.add_argument("--resume", type=bool, default=False, help="Training status")
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
@@ -145,27 +145,6 @@ def add_noise_(model):
         noise = _generate_noise(opt.max_per_sample_grad_norm, p)
         p.grad += noise
 
-
-# def enforce_privacy(model):
-#     # Calculate norm
-#     total_norm = 0
-#     for param in model.parameters():
-#         if param.requires_grad:
-#             total_norm += param.grad.data.norm(2).item() ** 2
-#     total_norm = total_norm ** .5
-#     clip_val = min(opt.max_per_sample_grad_norm / (total_norm + 1e-6), 1.)
-#
-#     # Clip grads
-#     for param in model.parameters():
-#         if param.requires_grad:
-#             # in-place multiplication with coefficient
-#             param.grad.data.mul_(clip_val)
-#
-#     # Adding noise
-#     params = (p for p in model.parameters() if p.requires_grad)
-#     for p in params:
-#         noise = _generate_noise(clip_val, p)
-#         p.grad += noise
 
 ##########################
 ### Dataset Processing ###
@@ -568,10 +547,21 @@ g_params = [{'params': generatorModel.parameters()},
             {'params': autoencoderDecoder.parameters(), 'lr': 1e-4}]
 # g_params = list(generatorModel.parameters()) + list(autoencoderModel.decoder.parameters())
 optimizer_G = torch.optim.Adam(g_params, lr=opt.lr, betas=(opt.b1, opt.b2), weight_decay=opt.weight_decay)
-optimizer_D = torch.optim.Adam(discriminatorModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2),
-                               weight_decay=opt.weight_decay)
-optimizer_A = torch.optim.Adam(autoencoderModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2),
-                               weight_decay=opt.weight_decay)
+# optimizer_D = torch.optim.Adam(discriminatorModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2),
+#                                weight_decay=opt.weight_decay)
+# optimizer_A = torch.optim.Adam(autoencoderModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2),
+#                                weight_decay=opt.weight_decay)
+
+optimizer_D = dp_optimizer.DPAdam(
+        l2_norm_clip=opt.max_per_sample_grad_norm,
+        noise_multiplier=opt.noise_multiplier,
+        minibatch_size=opt.batch_size,
+        microbatch_size=1,
+        params=discriminatorModel.parameters(),
+        lr=opt.lr,
+        betas=(opt.b1, opt.b2),
+        weight_decay=0.0001,
+    )
 
 optimizer_A = dp_optimizer.DPAdam(
         l2_norm_clip=opt.max_per_sample_grad_norm,
@@ -687,7 +677,7 @@ if opt.training:
     gen_iterations = 0
     for epoch in range(opt.n_epochs):
         epoch_start = time.time()
-        for i, samples in enumerate(dataloader_train):
+        for i_batch, samples in enumerate(dataloader_train):
 
             # ---------------------
             #  Train Discriminator
@@ -696,27 +686,19 @@ if opt.training:
             # Configure input
             real_samples = Variable(samples.type(Tensor))
 
-            for p in discriminatorModel.parameters():  # reset requires_grad
-                p.requires_grad = True
+            # reset gradients of discriminator
+            optimizer_D.zero_grad()
 
-            # train the discriminator n_iter_D times
-            if gen_iterations < 25 or gen_iterations % 500 == 0:
-                n_iter_D = 100
-            else:
-                n_iter_D = opt.n_iter_D
-            j = 0
-            while j < n_iter_D:
-                j += 1
+            # Microbatch processing
+            for i in range(opt.batch_size):
+                # Extract microbatch
+                micro_batch = real_samples[i:i + 1, :]
 
-                # clamp parameters to a cube
-                for p in discriminatorModel.parameters():
-                    p.data.clamp_(opt.clamp_lower, opt.clamp_upper)
-
-                # reset gradients of discriminator
-                optimizer_D.zero_grad()
+                for p in discriminatorModel.parameters():  # reset requires_grad
+                    p.requires_grad = True
 
                 # Error on real samples
-                errD_real = torch.mean(discriminatorModel(real_samples), dim=0)
+                errD_real = torch.mean(discriminatorModel(micro_batch), dim=0)
                 errD_real.backward(one)
 
                 # Measure discriminator's ability to classify real from generated samples
@@ -739,8 +721,12 @@ if opt.training:
                 errD = errD_real - errD_fake
                 # errD.backward(one)
 
-                # Optimizer step
-                optimizer_D.step()
+            # Optimizer step
+            optimizer_D.step()
+
+            # clamp parameters to a cube
+            for p in discriminatorModel.parameters():
+                p.data.clamp_(opt.clamp_lower, opt.clamp_upper)
 
             # -----------------
             #  Train Generator
@@ -784,39 +770,9 @@ if opt.training:
             optimizer_G.step()
             gen_iterations += 1
 
-        # with torch.no_grad():
-        #
-        #     # Variables
-        #     real_samples_test = next(iter(dataloader_test))
-        #     real_samples_test = Variable(real_samples_test.type(Tensor))
-        #     z = torch.randn(samples.shape[0], opt.latent_dim, device=device)
-        #
-        #     # Generator
-        #     fake_samples_test_temp = generatorModel(z)
-        #     fake_samples_test = torch.squeeze(autoencoderDecoder(fake_samples_test_temp.unsqueeze(dim=2)))
-        #
-        #     # Discriminator
-        #     # F.sigmoid() is needed as the discriminator outputs are logits without any sigmoid.
-        #     out_real_test = discriminatorModel(real_samples_test).view(-1)
-        #     accuracy_real_test = discriminator_accuracy(F.sigmoid(out_real_test), valid)
-        #
-        #     out_fake_test = discriminatorModel(fake_samples_test.detach()).view(-1)
-        #     accuracy_fake_test = discriminator_accuracy(F.sigmoid(out_fake_test), fake)
-        #
-        #     # Test autoencoder
-        #     reconst_samples_test = autoencoderModel(real_samples_test)
-        #     a_loss_test = autoencoder_loss(reconst_samples_test, real_samples_test)
-
         print('TRAIN: [Epoch %d/%d] [Batch %d/%d] Loss_D: %.6f Loss_G: %.6f Loss_D_real: %.6f Loss_D_fake %.6f'
-              % (epoch + 1, opt.n_epochs, i, len(dataloader_train),
+              % (epoch + 1, opt.n_epochs, i_batch, len(dataloader_train),
                  errD.item(), errG.item(), errD_real.item(), errD_fake.item()), flush=True)
-
-        # print(
-        #     "TEST: [Epoch %d/%d] [Batch %d/%d] [A loss: %.2f] [real accuracy: %.2f] [fake accuracy: %.2f]"
-        #     % (epoch + 1, opt.n_epochs, i, len(dataloader_train),
-        #        a_loss_test.item(), accuracy_real_test,
-        #        accuracy_fake_test)
-        #     , flush=True)
 
         # End of epoch
         epoch_end = time.time()
