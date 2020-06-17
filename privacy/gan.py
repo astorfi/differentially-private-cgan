@@ -11,6 +11,7 @@ import torch.nn as nn
 import torch
 import math
 import dp_optimizer
+import analysis
 
 parser = argparse.ArgumentParser()
 
@@ -52,8 +53,9 @@ parser.add_argument("--epoch_save_model_freq", type=int, default=10, help="numbe
 parser.add_argument("--minibatch_averaging", type=bool, default=False, help="Minibatch averaging")
 
 #### Privacy
-parser.add_argument('--noise_multiplier', type=float, default=1.0)
+parser.add_argument('--noise_multiplier', type=float, default=0.5)
 parser.add_argument('--max_per_sample_grad_norm', type=float, default=1.0)
+parser.add_argument('--delta', type=float, default=1e-5, help="Target delta (default: 1e-5)")
 
 # Training/Testing
 parser.add_argument("--pretrained_status", type=bool, default=True, help="If want to use ae pretrained weights")
@@ -219,7 +221,25 @@ dataloader_test = DataLoader(dataset_test_object, batch_size=opt.batch_size,
 random_samples = next(iter(dataloader_test))
 feature_size = random_samples.size()[1]
 
+###########################
+## Privacy Calculation ####
+###########################
+totalsamples = len(dataset_train_object)
+num_batches = len(dataloader_train)
+iterations = opt.n_epochs_pretrain * num_batches
+print(iterations)
+print('Achieves ({}, {})-DP'.format(
+        analysis.epsilon(
+            totalsamples,
+            opt.batch_size,
+            opt.noise_multiplier,
+            iterations,
+            opt.delta
+        ),
+        opt.delta,
+    ))
 
+sys.exit()
 ####################
 ### Architecture ###
 ####################
