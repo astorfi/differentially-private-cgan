@@ -54,7 +54,7 @@ parser.add_argument('--noise_multiplier', type=float, default=1.0)
 parser.add_argument('--max_per_sample_grad_norm', type=float, default=1.0)
 
 # Training/Testing
-parser.add_argument("--pretrained_status", type=bool, default=False, help="If want to use ae pretrained weights")
+parser.add_argument("--pretrained_status", type=bool, default=True, help="If want to use ae pretrained weights")
 parser.add_argument("--training", type=bool, default=True, help="Training status")
 parser.add_argument("--resume", type=bool, default=False, help="Training status")
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
@@ -323,7 +323,7 @@ class Generator(nn.Module):
     def forward(self, x):
         x = x.view(-1, x.shape[1], 1)
         out = self.main(x)
-        return torch.squeeze(out)
+        return torch.squeeze(out, dim=1)
 
 
 class Discriminator(nn.Module):
@@ -686,7 +686,7 @@ if opt.training:
                 # Generate a batch of images
                 fake = generatorModel(z)
 
-                fake_decoded = torch.squeeze(autoencoderDecoder(fake.unsqueeze(dim=2)))
+                fake_decoded = torch.squeeze(autoencoderDecoder(fake.unsqueeze(dim=2)), dim=1)
                 errD_fake = torch.mean(discriminatorModel(fake_decoded.detach()), dim=0)
                 errD_fake.backward(mone)
 
@@ -729,7 +729,7 @@ if opt.training:
             fake = generatorModel(z)
 
             # uncomment if there is no autoencoder
-            fake_decoded = torch.squeeze(autoencoderDecoder(fake.unsqueeze(dim=2)))
+            fake_decoded = torch.squeeze(autoencoderDecoder(fake.unsqueeze(dim=2)),dim=1)
 
             # Loss measures generator's ability to fool the discriminator
             errG = torch.mean(discriminatorModel(fake_decoded), dim=0)
