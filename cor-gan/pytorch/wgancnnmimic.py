@@ -785,7 +785,10 @@ if opt.generate:
     # ave synthetic data
     np.save(os.path.join(opt.expPATH, "synthetic.npy"), gen_samples, allow_pickle=False)
 
-
+    import csv
+    with open('output.tsv', 'w', newline='') as f_output:
+        tsv_output = csv.writer(f_output, delimiter='\t')
+        tsv_output.writerow(gen_samples[:1000])
 
 ###################
 ### Evaluation ####
@@ -829,6 +832,7 @@ if opt.evaluate:
 
     ##### Tests ###
     dwprob = True
+    dwpred = False
     ktest = False
     MMDtest = False
 
@@ -936,14 +940,15 @@ if opt.evaluate:
         return sum(map(lambda pair: (pair[0] - pair[1]) ** 2, zip(real_classifier_scores, synthetic_classifier_scores)))
 
 
-    # Data to Pandas DataFrame
-    train = pd.DataFrame(real_train.astype('int32'))
-    test = pd.DataFrame(real_test.astype('int32'))
-    synthetic = pd.DataFrame(gen_samples.astype('int32'))
-    print('Score achieved: {}'.format(feature_prediction_evaluation(train, test, synthetic,
-                                                                    Model=lambda: LogisticRegression(solver='liblinear',
-                                                                                                     max_iter=100),
-                                                                    score=f1_score, plot=True)))
+    if dwpred:
+        # Data to Pandas DataFrame
+        train = pd.DataFrame(real_train.astype('int32'))
+        test = pd.DataFrame(real_test.astype('int32'))
+        synthetic = pd.DataFrame(gen_samples.astype('int32'))
+        print('Score achieved: {}'.format(feature_prediction_evaluation(train, test, synthetic,
+                                                                        Model=lambda: LogisticRegression(solver='liblinear',
+                                                                                                         max_iter=100),
+                                                                        score=f1_score, plot=True)))
 
     if ktest:
         #### Kolmogorov-Smirnov test ###
