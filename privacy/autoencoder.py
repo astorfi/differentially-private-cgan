@@ -52,7 +52,7 @@ parser.add_argument("--epoch_save_model_freq", type=int, default=10, help="numbe
 parser.add_argument("--minibatch_averaging", type=bool, default=False, help="Minibatch averaging")
 
 #### Privacy
-parser.add_argument('--noise_multiplier', type=float, default=10.0)
+parser.add_argument('--noise_multiplier', type=float, default=0.5)
 parser.add_argument('--max_per_sample_grad_norm', type=float, default=1.0)
 parser.add_argument('--delta', type=float, default=1e-5, help="Target delta (default: 1e-5)")
 
@@ -181,8 +181,6 @@ print('Achieves ({}, {})-DP'.format(
         ),
         opt.delta,
     ))
-
-sys.exit()
 
 ####################
 ### Architecture ###
