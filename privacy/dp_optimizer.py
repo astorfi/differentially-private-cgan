@@ -42,10 +42,10 @@ def _generate_noise(noise_multiplier, max_norm, parameter):
 
 def create_optimizer(cls):
     class DPOptimizer(cls):
-        def __init__(self, l2_norm_clip, noise_multiplier, minibatch_size, *args, **kwargs):
+        def __init__(self, max_per_sample_grad_norm, noise_multiplier, minibatch_size, *args, **kwargs):
             super(DPOptimizer, self).__init__(*args, **kwargs)
 
-            self.l2_norm_clip = l2_norm_clip
+            self.max_per_sample_grad_norm = max_per_sample_grad_norm
             self.noise_multiplier = noise_multiplier
             self.minibatch_size = minibatch_size
 
@@ -56,14 +56,14 @@ def create_optimizer(cls):
         def zero_microbatch_grad(self):
             super(DPOptimizer, self).zero_grad()
 
-        def microbatch_step(self):
+        def clip_grads_(self):
             total_norm = 0.
             for group in self.param_groups:
                 for param in group['params']:
                     if param.requires_grad:
                         total_norm += param.grad.data.norm(2).item() ** 2.
             total_norm = total_norm ** .5
-            clip_coef = min(self.l2_norm_clip / (total_norm + 1e-8), 1.)
+            clip_coef = min(self.max_per_sample_grad_norm / (total_norm + 1e-8), 1.)
 
             for group in self.param_groups:
                 for param, accum_grad in zip(group['params'], group['accum_grads']):
@@ -76,7 +76,8 @@ def create_optimizer(cls):
                     if accum_grad is not None:
                         accum_grad.zero_()
 
-        def step(self, *args, **kwargs):
+
+        def add_noise_(self):
             for group in self.param_groups:
                 for param, accum_grad in zip(group['params'], group['accum_grads']):
                     if param.requires_grad:
@@ -85,11 +86,12 @@ def create_optimizer(cls):
                         param.grad.data = accum_grad.clone()
 
                         # Add noise
-                        param.grad.data.add_(_generate_noise(self.noise_multiplier, self.l2_norm_clip, param))
+                        param.grad.data.add_(_generate_noise(self.noise_multiplier, self.max_per_sample_grad_norm, param))
 
                         # Microbatch size is 1.0
                         param.grad.data.mul_(1.0 / self.minibatch_size)
 
+        def step(self, *args, **kwargs):
             super(DPOptimizer, self).step(*args, **kwargs)
 
     return DPOptimizer

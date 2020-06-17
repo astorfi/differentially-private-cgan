@@ -550,27 +550,21 @@ g_params = [{'params': generatorModel.parameters()},
             {'params': autoencoderDecoder.parameters(), 'lr': 1e-4}]
 # g_params = list(generatorModel.parameters()) + list(autoencoderModel.decoder.parameters())
 optimizer_G = torch.optim.Adam(g_params, lr=opt.lr, betas=(opt.b1, opt.b2), weight_decay=opt.weight_decay)
-# optimizer_D = torch.optim.Adam(discriminatorModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2),
-#                                weight_decay=opt.weight_decay)
-# optimizer_A = torch.optim.Adam(autoencoderModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2),
-#                                weight_decay=opt.weight_decay)
 
-optimizer_D = dp_optimizer.DPAdam(
-        l2_norm_clip=opt.max_per_sample_grad_norm,
+optimizer_D = dp_optimizer.AdamDP(
+        max_per_sample_grad_norm=opt.max_per_sample_grad_norm,
         noise_multiplier=opt.noise_multiplier,
         minibatch_size=opt.batch_size,
-        microbatch_size=1,
         params=discriminatorModel.parameters(),
         lr=opt.lr,
         betas=(opt.b1, opt.b2),
         weight_decay=0.0001,
     )
 
-optimizer_A = dp_optimizer.DPAdam(
-        l2_norm_clip=opt.max_per_sample_grad_norm,
+optimizer_A = dp_optimizer.AdamDP(
+        max_per_sample_grad_norm=opt.max_per_sample_grad_norm,
         noise_multiplier=opt.noise_multiplier,
         minibatch_size=opt.batch_size,
-        microbatch_size=1,
         params=autoencoderModel.parameters(),
         lr=opt.lr,
         betas=(opt.b1, opt.b2),
@@ -679,7 +673,11 @@ if opt.training:
                 errD = errD_real - errD_fake
                 # errD.backward(one)
 
+                # Bounding sensitivity
+                optimizer_D.clip_grads_()
+
             # Optimizer step
+            optimizer_D.add_noise_()
             optimizer_D.step()
 
             # clamp parameters to a cube

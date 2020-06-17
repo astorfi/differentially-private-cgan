@@ -319,10 +319,9 @@ autoencoderModel.apply(weights_init)
 
 # Optimizers
 optimizer_A = dp_optimizer.AdamDP(
-        l2_norm_clip=opt.max_per_sample_grad_norm,
+        max_per_sample_grad_norm=opt.max_per_sample_grad_norm,
         noise_multiplier=opt.noise_multiplier,
         minibatch_size=opt.batch_size,
-        microbatch_size=1,
         params=autoencoderModel.parameters(),
         lr=opt.lr,
         betas=(opt.b1, opt.b2),
@@ -393,11 +392,12 @@ for epoch_pre in range(opt.n_epochs_pretrain):
             a_loss.backward()
 
             # Bound sensitivity
-            optimizer_A.microbatch_step()
+            optimizer_A.clip_grads_()
 
             ################### Privacy ################
 
         # Step
+        optimizer_A.add_noise_()
         optimizer_A.step()
 
         batches_done = epoch_pre * len(dataloader_train) + i_batch + 1
