@@ -57,11 +57,11 @@ parser.add_argument('--max_per_sample_grad_norm', type=float, default=1.0)
 
 # Training/Testing
 parser.add_argument("--pretrained_status", type=bool, default=True, help="If want to use ae pretrained weights")
-parser.add_argument("--training", type=bool, default=True, help="Training status")
+parser.add_argument("--training", type=bool, default=False, help="Training status")
 parser.add_argument("--resume", type=bool, default=False, help="Training status")
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
-parser.add_argument("--generate", type=bool, default=False, help="Generating Sythetic Data")
-parser.add_argument("--evaluate", type=bool, default=False, help="Evaluation status")
+parser.add_argument("--generate", type=bool, default=True, help="Generating Sythetic Data")
+parser.add_argument("--evaluate", type=bool, default=True, help="Evaluation status")
 parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/' + experimentName),
                     help="Experiment path")
 parser.add_argument("--modelPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/' + experimentName + '/model'),
@@ -562,7 +562,7 @@ if opt.generate:
     #####################################
 
     # Loading the checkpoint
-    checkpoint = torch.load(os.path.join(opt.expPATH, "model_epoch_10.pth"))
+    checkpoint = torch.load(os.path.join(opt.modelPATH, "model_epoch_80.pth"))
 
     # Load models
     generatorModel.load_state_dict(checkpoint['Generator_state_dict'])

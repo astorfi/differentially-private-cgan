@@ -226,7 +226,7 @@ feature_size = random_samples.size()[1]
 ###########################
 totalsamples = len(dataset_train_object)
 num_batches = len(dataloader_train)
-iterations = opt.n_epochs_pretrain * num_batches
+iterations = opt.n_epochs * num_batches
 print('Achieves ({}, {})-DP'.format(
         analysis.epsilon(
             totalsamples,
@@ -599,7 +599,7 @@ if opt.training:
         #####################################
 
         # Loading the checkpoint
-        checkpoint = torch.load(os.path.join(opt.PATH, "model_epoch_1000.pth"))
+        checkpoint = torch.load(os.path.join(opt.modelPATH, "model_epoch_50.pth"))
 
         # Load models
         generatorModel.load_state_dict(checkpoint['Generator_state_dict'])
@@ -612,18 +612,17 @@ if opt.training:
         optimizer_D.load_state_dict(checkpoint['optimizer_D_state_dict'])
         optimizer_A.load_state_dict(checkpoint['optimizer_A_state_dict'])
 
-        # Load losses
-        g_loss = checkpoint['g_loss']
-        d_loss = checkpoint['d_loss']
-        a_loss = checkpoint['a_loss']
-
         # Load epoch number
-        epoch = checkpoint['epoch']
+        epoch_resume = checkpoint['epoch']
 
         generatorModel.eval()
         discriminatorModel.eval()
         autoencoderModel.eval()
         autoencoderDecoder.eval()
+
+    else:
+        epoch_resume = 0
+        print('Training from scratch...')
 
     if not opt.pretrained_status:
         print('No pretrained autoencoder')
@@ -644,7 +643,7 @@ if opt.training:
         autoencoderModel.eval()
 
     gen_iterations = 0
-    for epoch in range(opt.n_epochs):
+    for epoch in range(epoch_resume, opt.n_epochs):
         epoch_start = time.time()
         for i_batch, samples in enumerate(dataloader_train):
 
