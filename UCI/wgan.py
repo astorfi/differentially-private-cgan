@@ -19,8 +19,8 @@ parser = argparse.ArgumentParser()
 # experimentName is the current file name without extension
 experimentName = os.path.splitext(os.path.basename(__file__))[0]
 
-parser.add_argument("--DATASETPATH", type=str,
-                    default=os.path.expanduser('~/data/UCI/data.csv'),
+parser.add_argument("--DATASETDIR", type=str,
+                    default=os.path.expanduser('~/data/UCI'),
                     help="Dataset file")
 
 parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
@@ -85,51 +85,9 @@ device = torch.device("cuda:0" if opt.cuda else "cpu")
 ##########################
 ### Dataset Processing ###
 ##########################
-
-# Read data
-df = pd.read_csv(os.path.expanduser(opt.DATASETPATH))
-
-# Set seizure activity label with 1 and the others with zero
-# Info about initial class labels: https://archive.ics.uci.edu/ml/datasets/Epileptic+Seizure+Recognition
-df['y'] = (df['y'] == 1).replace(True,1).replace(False,0)
-
-# Train/test split
-import sklearn.model_selection as skl
-train_df, test_df = skl.train_test_split(df,
-                                   test_size = 0.2,
-                                   stratify = df['y'])
-
-# Report positive labels distribution
-print('Positive label percentage in train set', train_df['y'].sum()/len(train_df))
-print('Positive label percentage in test set', test_df['y'].sum()/len(test_df))
-
-# Associated features
-X_train, y_train, X_test, y_test = train_df.drop(['y','Unnamed: 0'], axis=1), train_df['y'], test_df.drop(['y','Unnamed: 0'], axis=1), test_df['y']
-
-# Scaling features
-from sklearn.preprocessing import StandardScaler
-sc = StandardScaler()
-X_train = sc.fit_transform(X_train)
-X_test = sc.transform(X_test)
-
-
-sampleSize = data.shape[0]
-featureSize = data.shape[1]
-
-# Split train-test
-indices = np.random.permutation(sampleSize)
-training_idx, test_idx = indices[:int(0.8 * sampleSize)], indices[int(0.8 * sampleSize):]
-trainData = data[training_idx, :]
-testData = data[test_idx, :]
-
-# Trasnform Object array to float
-trainData = trainData.astype(np.float32)
-testData = testData.astype(np.float32)
-
-# ave synthetic data
-np.save(os.path.join(opt.expPATH, "dataTrain.npy"), trainData, allow_pickle=False)
-np.save(os.path.join(opt.expPATH, "dataTest.npy"), testData, allow_pickle=False)
-
+# Read data with the last dimension that is the class label
+trainData = pd.read_csv(os.path.join(opt.DATASETDIR,'train.csv')).drop('Unnamed: 0', axis=1).to_numpy()
+testData = pd.read_csv(os.path.join(opt.DATASETDIR,'test.csv')).drop('Unnamed: 0', axis=1).to_numpy()
 
 class Dataset:
     def __init__(self, data, transform=None):
@@ -153,7 +111,6 @@ class Dataset:
             idx = idx.tolist()
 
         sample = self.data[idx]
-        sample = np.clip(sample, 0, 1)
 
         if self.transform:
             pass
@@ -248,7 +205,7 @@ class Autoencoder(nn.Module):
             nn.ConvTranspose1d(in_channels=n_channels_base, out_channels=1, kernel_size=3, stride=2,
                                padding=0, dilation=1,
                                groups=1, bias=True, padding_mode='zeros'),
-            nn.Sigmoid(),
+            nn.ReLU(),
         )
 
     def forward(self, x):
