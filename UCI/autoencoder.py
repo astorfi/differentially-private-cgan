@@ -24,7 +24,7 @@ experimentName = 'uci'
 parser.add_argument("--DATASETDIR", type=str,
                     default=os.path.expanduser('~/data/UCI'),
                     help="Dataset file")
-parser.add_argument("--n_epochs_pretrain", type=int, default=10,
+parser.add_argument("--n_epochs_pretrain", type=int, default=20,
                     help="number of epochs of pretraining the autoencoder")
 parser.add_argument("--batch_size", type=int, default=64, help="size of the batches")
 parser.add_argument("--lr", type=float, default=0.001, help="adam: learning rate")
@@ -231,7 +231,7 @@ class Autoencoder(nn.Module):
 
     def decode(self, x):
         x = self.decoder(x)
-        return torch.squeeze(x)
+        return torch.squeeze(x, dim=1)
 
 ###############
 ### Lossess ###

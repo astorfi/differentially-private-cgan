@@ -27,7 +27,7 @@ parser.add_argument("--DATASETDIR", type=str,
 parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
 parser.add_argument("--n_epochs_pretrain", type=int, default=10,
                     help="number of epochs of pretraining the autoencoder")
-parser.add_argument("--batch_size", type=int, default=64, help="size of the batches")
+parser.add_argument("--batch_size", type=int, default=128, help="size of the batches")
 parser.add_argument("--lr", type=float, default=0.001, help="adam: learning rate")
 parser.add_argument("--weight_decay", type=float, default=0.00001, help="l2 regularization")
 parser.add_argument("--b1", type=float, default=0.9, help="adam: decay of first order momentum of gradient")
@@ -54,12 +54,13 @@ parser.add_argument("--epoch_save_model_freq", type=int, default=10, help="numbe
 parser.add_argument("--minibatch_averaging", type=bool, default=False, help="Minibatch averaging")
 
 #### Privacy
+parser.add_argument('--dp_privacy', type=bool, default=False)
 parser.add_argument('--noise_multiplier', type=float, default=0.5)
 parser.add_argument('--max_per_sample_grad_norm', type=float, default=1.0)
 parser.add_argument('--delta', type=float, default=1e-5, help="Target delta (default: 1e-5)")
 
 # Training/Testing
-parser.add_argument("--pretrained_status", type=bool, default=False, help="If want to use ae pretrained weights")
+parser.add_argument("--pretrained_status", type=bool, default=True, help="If want to use ae pretrained weights")
 parser.add_argument("--training", type=bool, default=True, help="Training status")
 parser.add_argument("--resume", type=bool, default=False, help="Training status")
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
@@ -207,19 +208,20 @@ feature_size = random_samples.size()[1]
 ###########################
 ## Privacy Calculation ####
 ###########################
-totalsamples = len(dataset_train_object)
-num_batches = len(dataloader_train)
-iterations = opt.n_epochs * num_batches
-print('Achieves ({}, {})-DP'.format(
-        analysis.epsilon(
-            totalsamples,
-            opt.batch_size,
-            opt.noise_multiplier,
-            iterations,
-            opt.delta
-        ),
-        opt.delta,
-    ))
+if opt.dp_privacy:
+    totalsamples = len(dataset_train_object)
+    num_batches = len(dataloader_train)
+    iterations = opt.n_epochs * num_batches
+    print('Achieves ({}, {})-DP'.format(
+            analysis.epsilon(
+                totalsamples,
+                opt.batch_size,
+                opt.noise_multiplier,
+                iterations,
+                opt.delta
+            ),
+            opt.delta,
+        ))
 ####################
 ### Architecture ###
 ####################
@@ -248,59 +250,43 @@ class Autoencoder(nn.Module):
                       groups=1, bias=True, padding_mode='zeros'),
             nn.BatchNorm1d(8 * n_channels_base),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv1d(in_channels=8 * n_channels_base, out_channels=16 * n_channels_base, kernel_size=5, stride=3,
-                      padding=0, dilation=1,
-                      groups=1, bias=True, padding_mode='zeros'),
-            nn.BatchNorm1d(16 * n_channels_base),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv1d(in_channels=16 * n_channels_base, out_channels=32 * n_channels_base, kernel_size=8, stride=1,
+            nn.Conv1d(in_channels=8 * n_channels_base, out_channels=16 * n_channels_base, kernel_size=3, stride=1,
                       padding=0, dilation=1,
                       groups=1, bias=True, padding_mode='zeros'),
             nn.Tanh(),
         )
 
         self.decoder = nn.Sequential(
-            nn.ConvTranspose1d(in_channels=32 * n_channels_base, out_channels=16 * n_channels_base, kernel_size=5,
+            nn.ConvTranspose1d(in_channels=16 * n_channels_base, out_channels=8 * n_channels_base, kernel_size=5,
                                stride=1, padding=0, dilation=1,
                                groups=1, bias=True, padding_mode='zeros'),
             nn.ReLU(),
-            nn.ConvTranspose1d(in_channels=16 * n_channels_base, out_channels=8 * n_channels_base, kernel_size=5,
+            nn.ConvTranspose1d(in_channels=8 * n_channels_base, out_channels=4 * n_channels_base, kernel_size=5,
                                stride=4, padding=0,
                                dilation=1,
-                               groups=1, bias=True, padding_mode='zeros'),
-            nn.BatchNorm1d(8 * n_channels_base),
-            nn.ReLU(),
-            nn.ConvTranspose1d(in_channels=8 * n_channels_base, out_channels=4 * n_channels_base, kernel_size=7,
-                               stride=4,
-                               padding=0, dilation=1,
                                groups=1, bias=True, padding_mode='zeros'),
             nn.BatchNorm1d(4 * n_channels_base),
             nn.ReLU(),
             nn.ConvTranspose1d(in_channels=4 * n_channels_base, out_channels=2 * n_channels_base, kernel_size=7,
-                               stride=3,
+                               stride=4,
                                padding=0, dilation=1,
                                groups=1, bias=True, padding_mode='zeros'),
             nn.BatchNorm1d(2 * n_channels_base),
             nn.ReLU(),
-            nn.ConvTranspose1d(in_channels=2 * n_channels_base, out_channels=n_channels_base, kernel_size=7, stride=2,
+            nn.ConvTranspose1d(in_channels=2 * n_channels_base, out_channels=1, kernel_size=7, stride=2,
                                padding=0, dilation=1,
                                groups=1, bias=True, padding_mode='zeros'),
-            nn.BatchNorm1d(n_channels_base),
             nn.ReLU(),
-            nn.ConvTranspose1d(in_channels=n_channels_base, out_channels=1, kernel_size=3, stride=2,
-                               padding=0, dilation=1,
-                               groups=1, bias=True, padding_mode='zeros'),
-            nn.Sigmoid(),
         )
 
     def forward(self, x):
         x = self.encoder(x.view(-1, 1, x.shape[1]))
         x = self.decoder(x)
-        return torch.squeeze(x)
+        return torch.squeeze(x, dim=1)
 
     def decode(self, x):
         x = self.decoder(x)
-        return torch.squeeze(x)
+        return torch.squeeze(x, dim=1)
 
 
 class Generator(nn.Module):
@@ -320,10 +306,10 @@ class Generator(nn.Module):
         nn.ConvTranspose1d(ngf * 4, ngf * 2, 4, 2, 1),
         nn.BatchNorm1d(ngf * 2, eps=0.0001, momentum=0.01),
         nn.LeakyReLU(0.2, inplace=True),
-        nn.ConvTranspose1d(ngf * 2, ngf, 4, 2, 1),
-        nn.BatchNorm1d(ngf, eps=0.001, momentum=0.01),
-        nn.LeakyReLU(0.2, inplace=True),
-        nn.ConvTranspose1d(ngf, 1, 4, 2, 1),
+        # nn.ConvTranspose1d(ngf * 2, ngf, 4, 2, 1),
+        # nn.BatchNorm1d(ngf, eps=0.001, momentum=0.01),
+        # nn.LeakyReLU(0.2, inplace=True),
+        nn.ConvTranspose1d(ngf * 2, 1, 4, 2, 1),
         nn.Tanh(),
         )
 
@@ -356,16 +342,16 @@ class Discriminator(nn.Module):
             nn.LeakyReLU(0.2, inplace=True),
         )
 
-        self.conv4 = nn.Sequential(
-            # state size. (ndf*4) x 8 x 8
-            nn.Conv1d(ndf * 4, ndf * 8, 8, 4, 1),
-            nn.BatchNorm1d(ndf * 8),
-            nn.LeakyReLU(0.2, inplace=True),
-        )
+        # self.conv4 = nn.Sequential(
+        #     # state size. (ndf*4) x 8 x 8
+        #     nn.Conv1d(ndf * 4, ndf * 8, 8, 4, 1),
+        #     nn.BatchNorm1d(ndf * 8),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        # )
 
-        self.conv5 = nn.Sequential(
+        self.conv4 = nn.Sequential(
             # state size. (ndf*8) x 4 x 4
-            nn.Conv1d(ndf * 8, 1, 3, 1, 0),
+            nn.Conv1d(ndf * 4, 1, 2, 1, 0),
             nn.Sigmoid()
         )
 
@@ -374,7 +360,6 @@ class Discriminator(nn.Module):
         out = self.conv2(out)
         out = self.conv3(out)
         out = self.conv4(out)
-        out = self.conv5(out)
         return torch.squeeze(out, dim=2)
 
 ###############
@@ -640,23 +625,54 @@ if opt.training:
             # reset gradients of discriminator
             optimizer_D.zero_grad()
 
-            # Microbatch processing
-            for i in range(opt.batch_size):
-                # Extract microbatch
-                micro_batch = real_samples[i:i + 1, :]
+            if opt.dp_privacy:
 
+                # Microbatch processing
+                for i in range(opt.batch_size):
+                    # Extract microbatch
+                    micro_batch = real_samples[i:i + 1, :]
+
+                    for p in discriminatorModel.parameters():  # reset requires_grad
+                        p.requires_grad = True
+
+                    # Error on real samples
+                    errD_real = torch.mean(discriminatorModel(micro_batch), dim=0)
+                    errD_real.backward(one)
+
+                    # Measure discriminator's ability to classify real from generated samples
+                    # The detach() method constructs a new view on a tensor which is declared
+                    # not to need gradients, i.e., it is to be excluded from further tracking of
+                    # operations, and therefore the subgraph involving this view is not recorded.
+                    # Refer to http://www.bnikolic.co.uk/blog/pytorch-detach.html.
+
+                    # Sample noise as generator input
+                    z = torch.randn(samples.shape[0], opt.latent_dim, device=device)
+
+                    # Generate a batch of images
+                    fake = generatorModel(z)
+
+                    fake_decoded = torch.squeeze(autoencoderDecoder(fake.unsqueeze(dim=2)), dim=1)
+                    errD_fake = torch.mean(discriminatorModel(fake_decoded.detach()), dim=0)
+                    errD_fake.backward(mone)
+
+                    # Error
+                    errD = errD_real - errD_fake
+                    # errD.backward(one)
+
+                    # Bounding sensitivity
+                    optimizer_D.clip_grads_()
+
+                # Optimizer step
+                optimizer_D.add_noise_()
+                optimizer_D.step()
+
+            else:
                 for p in discriminatorModel.parameters():  # reset requires_grad
                     p.requires_grad = True
 
                 # Error on real samples
-                errD_real = torch.mean(discriminatorModel(micro_batch), dim=0)
+                errD_real = torch.mean(discriminatorModel(real_samples), dim=0)
                 errD_real.backward(one)
-
-                # Measure discriminator's ability to classify real from generated samples
-                # The detach() method constructs a new view on a tensor which is declared
-                # not to need gradients, i.e., it is to be excluded from further tracking of
-                # operations, and therefore the subgraph involving this view is not recorded.
-                # Refer to http://www.bnikolic.co.uk/blog/pytorch-detach.html.
 
                 # Sample noise as generator input
                 z = torch.randn(samples.shape[0], opt.latent_dim, device=device)
@@ -672,12 +688,7 @@ if opt.training:
                 errD = errD_real - errD_fake
                 # errD.backward(one)
 
-                # Bounding sensitivity
-                optimizer_D.clip_grads_()
-
-            # Optimizer step
-            optimizer_D.add_noise_()
-            optimizer_D.step()
+                optimizer_D.step()
 
             # clamp parameters to a cube
             for p in discriminatorModel.parameters():
