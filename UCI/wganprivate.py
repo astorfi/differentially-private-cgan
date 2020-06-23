@@ -12,6 +12,7 @@ import torch
 import math
 import dp_optimizer
 import analysis
+import pandas as pd
 
 parser = argparse.ArgumentParser()
 
@@ -58,7 +59,7 @@ parser.add_argument('--max_per_sample_grad_norm', type=float, default=1.0)
 parser.add_argument('--delta', type=float, default=1e-5, help="Target delta (default: 1e-5)")
 
 # Training/Testing
-parser.add_argument("--pretrained_status", type=bool, default=True, help="If want to use ae pretrained weights")
+parser.add_argument("--pretrained_status", type=bool, default=False, help="If want to use ae pretrained weights")
 parser.add_argument("--training", type=bool, default=True, help="Training status")
 parser.add_argument("--resume", type=bool, default=False, help="Training status")
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
@@ -158,7 +159,6 @@ def add_noise_(model):
 trainData = pd.read_csv(os.path.join(opt.DATASETDIR,'train.csv')).drop('Unnamed: 0', axis=1).to_numpy()
 testData = pd.read_csv(os.path.join(opt.DATASETDIR,'test.csv')).drop('Unnamed: 0', axis=1).to_numpy()
 
-
 class Dataset:
     def __init__(self, data, transform=None):
 
@@ -181,7 +181,6 @@ class Dataset:
             idx = idx.tolist()
 
         sample = self.data[idx]
-        sample = np.clip(sample, 0, 1)
 
         if self.transform:
             pass
