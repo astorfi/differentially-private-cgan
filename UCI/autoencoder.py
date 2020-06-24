@@ -53,8 +53,8 @@ parser.add_argument("--epoch_save_model_freq", type=int, default=10, help="numbe
 parser.add_argument("--minibatch_averaging", type=bool, default=False, help="Minibatch averaging")
 
 #### Privacy
-parser.add_argument('--dp_privacy', type=bool, default=False)
-parser.add_argument('--noise_multiplier', type=float, default=0.5)
+parser.add_argument('--dp_privacy', type=bool, default=True)
+parser.add_argument('--noise_multiplier', type=float, default=0.0005)
 parser.add_argument('--max_per_sample_grad_norm', type=float, default=1.0)
 parser.add_argument('--delta', type=float, default=1e-5, help="Target delta (default: 1e-5)")
 
@@ -198,7 +198,7 @@ class Autoencoder(nn.Module):
             nn.Conv1d(in_channels=8 * n_channels_base, out_channels=16 * n_channels_base, kernel_size=3, stride=1,
                       padding=0, dilation=1,
                       groups=1, bias=True, padding_mode='zeros'),
-            nn.Tanh(),
+            nn.ReLU(),
         )
 
         self.decoder = nn.Sequential(
@@ -221,7 +221,7 @@ class Autoencoder(nn.Module):
             nn.ConvTranspose1d(in_channels=2 * n_channels_base, out_channels=1, kernel_size=7, stride=2,
                                padding=0, dilation=1,
                                groups=1, bias=True, padding_mode='zeros'),
-            nn.ReLU(),
+            nn.Sigmoid(),
         )
 
     def forward(self, x):
@@ -237,8 +237,8 @@ class Autoencoder(nn.Module):
 ### Lossess ###
 ###############
 
-# MSE loss
-MSEloss = nn.MSELoss(reduction='mean')
+
+MSEloss = nn.MSELoss(reduction='sum')
 def autoencoder_loss(x_output, y_target):
     """
     autoencoder_loss
@@ -249,6 +249,19 @@ def autoencoder_loss(x_output, y_target):
     """
 
     return MSEloss(x_output, y_target)
+
+# def autoencoder_loss(x_output, y_target):
+#     """
+#     autoencoder_loss
+#     This implementation is equivalent to the following:
+#     torch.nn.BCELoss(reduction='sum') / batch_size
+#     As our matrix is too sparse, first we will take a sum over the features and then do the mean over the batch.
+#     WARNING: This is NOT equivalent to torch.nn.BCELoss(reduction='mean') as the later on, mean over both features and batches.
+#     """
+#     epsilon = 1e-12
+#     term = y_target * torch.log(x_output + epsilon) + (1. - y_target) * torch.log(1. - x_output + epsilon)
+#     loss = torch.mean(-torch.sum(term, 1), 0)
+#     return loss
 
 
 
@@ -307,15 +320,19 @@ if opt.cuda:
 autoencoderModel.apply(weights_init)
 
 # Optimizers
-optimizer_A = dp_optimizer.AdamDP(
-        max_per_sample_grad_norm=opt.max_per_sample_grad_norm,
-        noise_multiplier=opt.noise_multiplier,
-        batch_size=opt.batch_size,
-        params=autoencoderModel.parameters(),
-        lr=opt.lr,
-        betas=(opt.b1, opt.b2),
-        weight_decay=opt.weight_decay,
-    )
+if opt.dp_privacy:
+    optimizer_A = dp_optimizer.AdamDP(
+            max_per_sample_grad_norm=opt.max_per_sample_grad_norm,
+            noise_multiplier=opt.noise_multiplier,
+            batch_size=opt.batch_size,
+            params=autoencoderModel.parameters(),
+            lr=opt.lr,
+            betas=(opt.b1, opt.b2),
+            weight_decay=opt.weight_decay,
+        )
+else:
+    optimizer_A = torch.optim.Adam(autoencoderModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2),
+                                   weight_decay=opt.weight_decay)
 
 ################
 ### TRAINING ###
