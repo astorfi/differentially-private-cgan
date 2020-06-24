@@ -12,21 +12,22 @@ import torch
 import math
 import dp_optimizer
 import analysis
+import pandas as pd
 
 parser = argparse.ArgumentParser()
 
 # experimentName is the current file name without extension
 experimentName = os.path.splitext(os.path.basename(__file__))[0]
-experimentName = 'rdp'
+experimentName = 'uci'
 
-parser.add_argument("--DATASETPATH", type=str,
-                    default=os.path.expanduser('~/data/MIMIC/processed/out_binary.matrix'),
+parser.add_argument("--DATASETDIR", type=str,
+                    default=os.path.expanduser('~/data/UCI'),
                     help="Dataset file")
 
-parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
+parser.add_argument("--n_epochs", type=int, default=1000, help="number of epochs of training")
 parser.add_argument("--n_epochs_pretrain", type=int, default=10,
                     help="number of epochs of pretraining the autoencoder")
-parser.add_argument("--batch_size", type=int, default=64, help="size of the batches")
+parser.add_argument("--batch_size", type=int, default=128, help="size of the batches")
 parser.add_argument("--lr", type=float, default=0.001, help="adam: learning rate")
 parser.add_argument("--weight_decay", type=float, default=0.00001, help="l2 regularization")
 parser.add_argument("--b1", type=float, default=0.9, help="adam: decay of first order momentum of gradient")
@@ -53,7 +54,8 @@ parser.add_argument("--epoch_save_model_freq", type=int, default=10, help="numbe
 parser.add_argument("--minibatch_averaging", type=bool, default=False, help="Minibatch averaging")
 
 #### Privacy
-parser.add_argument('--noise_multiplier', type=float, default=0.5)
+parser.add_argument('--dp_privacy', type=bool, default=True)
+parser.add_argument('--noise_multiplier', type=float, default=0.0005)
 parser.add_argument('--max_per_sample_grad_norm', type=float, default=1.0)
 parser.add_argument('--delta', type=float, default=1e-5, help="Target delta (default: 1e-5)")
 
@@ -154,26 +156,13 @@ def add_noise_(model):
 ##########################
 ### Dataset Processing ###
 ##########################
+# Read data with the last dimension that is the class label
+trainData = pd.read_csv(os.path.join(opt.DATASETDIR,'train.csv')).drop('Unnamed: 0', axis=1).to_numpy()
+testData = pd.read_csv(os.path.join(opt.DATASETDIR,'test.csv')).drop('Unnamed: 0', axis=1).to_numpy()
 
-data = np.load(os.path.expanduser(opt.DATASETPATH), allow_pickle=True)
-
-sampleSize = data.shape[0]
-featureSize = data.shape[1]
-
-# Split train-test
-indices = np.random.permutation(sampleSize)
-training_idx, test_idx = indices[:int(0.8 * sampleSize)], indices[int(0.8 * sampleSize):]
-trainData = data[training_idx, :]
-testData = data[test_idx, :]
-
-# Trasnform Object array to float
-trainData = trainData.astype(np.float32)
-testData = testData.astype(np.float32)
-
-# ave synthetic data
-np.save(os.path.join(opt.expPATH, "dataTrain.npy"), trainData, allow_pickle=False)
-np.save(os.path.join(opt.expPATH, "dataTest.npy"), testData, allow_pickle=False)
-
+# Class specific data
+classLabel = 0.0
+trainData = trainData[trainData[:,-1] == classLabel]
 
 class Dataset:
     def __init__(self, data, transform=None):
@@ -197,7 +186,6 @@ class Dataset:
             idx = idx.tolist()
 
         sample = self.data[idx]
-        sample = np.clip(sample, 0, 1)
 
         if self.transform:
             pass
@@ -224,19 +212,20 @@ feature_size = random_samples.size()[1]
 ###########################
 ## Privacy Calculation ####
 ###########################
-totalsamples = len(dataset_train_object)
-num_batches = len(dataloader_train)
-iterations = opt.n_epochs * num_batches
-print('Achieves ({}, {})-DP'.format(
-        analysis.epsilon(
-            totalsamples,
-            opt.batch_size,
-            opt.noise_multiplier,
-            iterations,
-            opt.delta
-        ),
-        opt.delta,
-    ))
+if opt.dp_privacy:
+    totalsamples = len(dataset_train_object)
+    num_batches = len(dataloader_train)
+    iterations = opt.n_epochs * num_batches
+    print('Achieves ({}, {})-DP'.format(
+            analysis.epsilon(
+                totalsamples,
+                opt.batch_size,
+                opt.noise_multiplier,
+                iterations,
+                opt.delta
+            ),
+            opt.delta,
+        ))
 ####################
 ### Architecture ###
 ####################
@@ -265,46 +254,30 @@ class Autoencoder(nn.Module):
                       groups=1, bias=True, padding_mode='zeros'),
             nn.BatchNorm1d(8 * n_channels_base),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv1d(in_channels=8 * n_channels_base, out_channels=16 * n_channels_base, kernel_size=5, stride=3,
+            nn.Conv1d(in_channels=8 * n_channels_base, out_channels=16 * n_channels_base, kernel_size=3, stride=1,
                       padding=0, dilation=1,
                       groups=1, bias=True, padding_mode='zeros'),
-            nn.BatchNorm1d(16 * n_channels_base),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv1d(in_channels=16 * n_channels_base, out_channels=32 * n_channels_base, kernel_size=8, stride=1,
-                      padding=0, dilation=1,
-                      groups=1, bias=True, padding_mode='zeros'),
-            nn.Tanh(),
+            nn.ReLU(),
         )
 
         self.decoder = nn.Sequential(
-            nn.ConvTranspose1d(in_channels=32 * n_channels_base, out_channels=16 * n_channels_base, kernel_size=5,
+            nn.ConvTranspose1d(in_channels=16 * n_channels_base, out_channels=8 * n_channels_base, kernel_size=5,
                                stride=1, padding=0, dilation=1,
                                groups=1, bias=True, padding_mode='zeros'),
-            nn.ReLU(),
-            nn.ConvTranspose1d(in_channels=16 * n_channels_base, out_channels=8 * n_channels_base, kernel_size=5,
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.ConvTranspose1d(in_channels=8 * n_channels_base, out_channels=4 * n_channels_base, kernel_size=5,
                                stride=4, padding=0,
                                dilation=1,
                                groups=1, bias=True, padding_mode='zeros'),
-            nn.BatchNorm1d(8 * n_channels_base),
-            nn.ReLU(),
-            nn.ConvTranspose1d(in_channels=8 * n_channels_base, out_channels=4 * n_channels_base, kernel_size=7,
+            nn.BatchNorm1d(4 * n_channels_base),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.ConvTranspose1d(in_channels=4 * n_channels_base, out_channels=2 * n_channels_base, kernel_size=7,
                                stride=4,
                                padding=0, dilation=1,
                                groups=1, bias=True, padding_mode='zeros'),
-            nn.BatchNorm1d(4 * n_channels_base),
-            nn.ReLU(),
-            nn.ConvTranspose1d(in_channels=4 * n_channels_base, out_channels=2 * n_channels_base, kernel_size=7,
-                               stride=3,
-                               padding=0, dilation=1,
-                               groups=1, bias=True, padding_mode='zeros'),
             nn.BatchNorm1d(2 * n_channels_base),
-            nn.ReLU(),
-            nn.ConvTranspose1d(in_channels=2 * n_channels_base, out_channels=n_channels_base, kernel_size=7, stride=2,
-                               padding=0, dilation=1,
-                               groups=1, bias=True, padding_mode='zeros'),
-            nn.BatchNorm1d(n_channels_base),
-            nn.ReLU(),
-            nn.ConvTranspose1d(in_channels=n_channels_base, out_channels=1, kernel_size=3, stride=2,
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.ConvTranspose1d(in_channels=2 * n_channels_base, out_channels=1, kernel_size=7, stride=2,
                                padding=0, dilation=1,
                                groups=1, bias=True, padding_mode='zeros'),
             nn.Sigmoid(),
@@ -313,11 +286,20 @@ class Autoencoder(nn.Module):
     def forward(self, x):
         x = self.encoder(x.view(-1, 1, x.shape[1]))
         x = self.decoder(x)
-        return torch.squeeze(x)
+        return torch.squeeze(x, dim=1)
 
     def decode(self, x):
         x = self.decoder(x)
-        return torch.squeeze(x)
+        return torch.squeeze(x, dim=1)
+
+    def forward(self, x):
+        x = self.encoder(x.view(-1, 1, x.shape[1]))
+        x = self.decoder(x)
+        return torch.squeeze(x, dim=1)
+
+    def decode(self, x):
+        x = self.decoder(x)
+        return torch.squeeze(x, dim=1)
 
 
 class Generator(nn.Module):
@@ -337,11 +319,11 @@ class Generator(nn.Module):
         nn.ConvTranspose1d(ngf * 4, ngf * 2, 4, 2, 1),
         nn.BatchNorm1d(ngf * 2, eps=0.0001, momentum=0.01),
         nn.LeakyReLU(0.2, inplace=True),
-        nn.ConvTranspose1d(ngf * 2, ngf, 4, 2, 1),
-        nn.BatchNorm1d(ngf, eps=0.001, momentum=0.01),
-        nn.LeakyReLU(0.2, inplace=True),
-        nn.ConvTranspose1d(ngf, 1, 4, 2, 1),
-        nn.Tanh(),
+        # nn.ConvTranspose1d(ngf * 2, ngf, 4, 2, 1),
+        # nn.BatchNorm1d(ngf, eps=0.001, momentum=0.01),
+        # nn.LeakyReLU(0.2, inplace=True),
+        nn.ConvTranspose1d(ngf * 2, 1, 4, 2, 1),
+        nn.ReLU()
         )
 
     def forward(self, x):
@@ -373,17 +355,17 @@ class Discriminator(nn.Module):
             nn.LeakyReLU(0.2, inplace=True),
         )
 
-        self.conv4 = nn.Sequential(
-            # state size. (ndf*4) x 8 x 8
-            nn.Conv1d(ndf * 4, ndf * 8, 8, 4, 1),
-            nn.BatchNorm1d(ndf * 8),
-            nn.LeakyReLU(0.2, inplace=True),
-        )
+        # self.conv4 = nn.Sequential(
+        #     # state size. (ndf*4) x 8 x 8
+        #     nn.Conv1d(ndf * 4, ndf * 8, 8, 4, 1),
+        #     nn.BatchNorm1d(ndf * 8),
+        #     nn.LeakyReLU(0.2, inplace=True),
+        # )
 
-        self.conv5 = nn.Sequential(
+        self.conv4 = nn.Sequential(
             # state size. (ndf*8) x 4 x 4
-            nn.Conv1d(ndf * 8, 1, 3, 1, 0),
-            nn.Sigmoid()
+            nn.Conv1d(ndf * 4, 1, 2, 1, 0),
+            # nn.Sigmoid()
         )
 
     def forward(self, input):
@@ -391,7 +373,6 @@ class Discriminator(nn.Module):
         out = self.conv2(out)
         out = self.conv3(out)
         out = self.conv4(out)
-        out = self.conv5(out)
         return torch.squeeze(out, dim=2)
 
 ###############
@@ -568,25 +549,31 @@ g_params = [{'params': generatorModel.parameters()},
 # g_params = list(generatorModel.parameters()) + list(autoencoderModel.decoder.parameters())
 optimizer_G = torch.optim.Adam(g_params, lr=opt.lr, betas=(opt.b1, opt.b2), weight_decay=opt.weight_decay)
 
-optimizer_D = dp_optimizer.AdamDP(
-        max_per_sample_grad_norm=opt.max_per_sample_grad_norm,
-        noise_multiplier=opt.noise_multiplier,
-        batch_size=opt.batch_size,
-        params=discriminatorModel.parameters(),
-        lr=opt.lr,
-        betas=(opt.b1, opt.b2),
-        weight_decay=0.0001,
-    )
+if opt.dp_privacy:
+    optimizer_D = dp_optimizer.AdamDP(
+            max_per_sample_grad_norm=opt.max_per_sample_grad_norm,
+            noise_multiplier=opt.noise_multiplier,
+            batch_size=opt.batch_size,
+            params=discriminatorModel.parameters(),
+            lr=opt.lr,
+            betas=(opt.b1, opt.b2),
+            weight_decay=0.0001,
+        )
 
-optimizer_A = dp_optimizer.AdamDP(
-        max_per_sample_grad_norm=opt.max_per_sample_grad_norm,
-        noise_multiplier=opt.noise_multiplier,
-        batch_size=opt.batch_size,
-        params=autoencoderModel.parameters(),
-        lr=opt.lr,
-        betas=(opt.b1, opt.b2),
-        weight_decay=0.0001,
-    )
+    optimizer_A = dp_optimizer.AdamDP(
+            max_per_sample_grad_norm=opt.max_per_sample_grad_norm,
+            noise_multiplier=opt.noise_multiplier,
+            batch_size=opt.batch_size,
+            params=autoencoderModel.parameters(),
+            lr=opt.lr,
+            betas=(opt.b1, opt.b2),
+            weight_decay=0.0001,
+        )
+else:
+    optimizer_D = torch.optim.Adam(discriminatorModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2),
+                                   weight_decay=opt.weight_decay)
+    optimizer_A = torch.optim.Adam(autoencoderModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2),
+                                   weight_decay=opt.weight_decay)
 
 ################
 ### TRAINING ###
@@ -657,23 +644,54 @@ if opt.training:
             # reset gradients of discriminator
             optimizer_D.zero_grad()
 
-            # Microbatch processing
-            for i in range(opt.batch_size):
-                # Extract microbatch
-                micro_batch = real_samples[i:i + 1, :]
+            if opt.dp_privacy:
 
+                # Microbatch processing
+                for i in range(opt.batch_size):
+                    # Extract microbatch
+                    micro_batch = real_samples[i:i + 1, :]
+
+                    for p in discriminatorModel.parameters():  # reset requires_grad
+                        p.requires_grad = True
+
+                    # Error on real samples
+                    errD_real = torch.mean(discriminatorModel(micro_batch), dim=0)
+                    errD_real.backward(one)
+
+                    # Measure discriminator's ability to classify real from generated samples
+                    # The detach() method constructs a new view on a tensor which is declared
+                    # not to need gradients, i.e., it is to be excluded from further tracking of
+                    # operations, and therefore the subgraph involving this view is not recorded.
+                    # Refer to http://www.bnikolic.co.uk/blog/pytorch-detach.html.
+
+                    # Sample noise as generator input
+                    z = torch.randn(samples.shape[0], opt.latent_dim, device=device)
+
+                    # Generate a batch of images
+                    fake = generatorModel(z)
+
+                    fake_decoded = torch.squeeze(autoencoderDecoder(fake.unsqueeze(dim=2)), dim=1)
+                    errD_fake = torch.mean(discriminatorModel(fake_decoded.detach()), dim=0)
+                    errD_fake.backward(mone)
+
+                    # Error
+                    errD = errD_real - errD_fake
+                    # errD.backward(one)
+
+                    # Bounding sensitivity
+                    optimizer_D.clip_grads_()
+
+                # Optimizer step
+                optimizer_D.add_noise_()
+                optimizer_D.step()
+
+            else:
                 for p in discriminatorModel.parameters():  # reset requires_grad
                     p.requires_grad = True
 
                 # Error on real samples
-                errD_real = torch.mean(discriminatorModel(micro_batch), dim=0)
+                errD_real = torch.mean(discriminatorModel(real_samples), dim=0)
                 errD_real.backward(one)
-
-                # Measure discriminator's ability to classify real from generated samples
-                # The detach() method constructs a new view on a tensor which is declared
-                # not to need gradients, i.e., it is to be excluded from further tracking of
-                # operations, and therefore the subgraph involving this view is not recorded.
-                # Refer to http://www.bnikolic.co.uk/blog/pytorch-detach.html.
 
                 # Sample noise as generator input
                 z = torch.randn(samples.shape[0], opt.latent_dim, device=device)
@@ -689,12 +707,7 @@ if opt.training:
                 errD = errD_real - errD_fake
                 # errD.backward(one)
 
-                # Bounding sensitivity
-                optimizer_D.clip_grads_()
-
-            # Optimizer step
-            optimizer_D.add_noise_()
-            optimizer_D.step()
+                optimizer_D.step()
 
             # clamp parameters to a cube
             for p in discriminatorModel.parameters():
@@ -764,157 +777,8 @@ if opt.training:
                 'optimizer_G_state_dict': optimizer_G.state_dict(),
                 'optimizer_D_state_dict': optimizer_D.state_dict(),
                 'optimizer_A_state_dict': optimizer_A.state_dict(),
-            }, os.path.join(opt.modelPATH, "model_epoch_%d.pth" % (epoch + 1)))
+            }, os.path.join(opt.modelPATH, "model_epoch_%d_%d.pth" % (epoch + 1, int(classLabel))))
 
             # keep only the most recent 10 saved models
             # ls -d -1tr /home/sina/experiments/pytorch/model/* | head -n -10 | xargs -d '\n' rm -f
             # call("ls -d -1tr " + opt.expPATH + "/*" + " | head -n -10 | xargs -d '\n' rm -f", shell=True)
-
-if opt.generate:
-
-    # Check cuda
-    if torch.cuda.is_available() and not opt.cuda:
-        print("WARNING: You have a CUDA device BUT it is not in use...")
-
-    # Activate CUDA
-    device = torch.device("cuda:0" if opt.cuda else "cpu")
-
-    #####################################
-    #### Load model and optimizer #######
-    #####################################
-
-    # Loading the checkpoint
-    checkpoint = torch.load(os.path.join(opt.expPATH, "model_epoch_10.pth"))
-
-    # Load models
-    generatorModel.load_state_dict(checkpoint['Generator_state_dict'])
-    autoencoderModel.load_state_dict(checkpoint['Autoencoder_state_dict'])
-    autoencoderDecoder.load_state_dict(checkpoint['Autoencoder_Decoder_state_dict'])
-
-    # insert weights [required]
-    generatorModel.eval()
-    autoencoderModel.eval()
-    autoencoderDecoder.eval()
-
-    #######################################################
-    #### Load real data and generate synthetic data #######
-    #######################################################
-
-    # Load real data
-    real_samples = dataset_train_object.return_data()
-    num_fake_samples = 10000
-
-    # Generate a batch of samples
-    gen_samples = np.zeros_like(real_samples, dtype=type(real_samples))
-    n_batches = int(num_fake_samples / opt.batch_size)
-    for i in range(n_batches):
-        # Sample noise as generator input
-        # z = Variable(Tensor(np.random.normal(0, 1, (opt.batch_size, opt.latent_dim))))
-        z = torch.randn(opt.batch_size, opt.latent_dim, device=device)
-        gen_samples_tensor = generatorModel(z)
-        gen_samples_decoded = torch.squeeze(
-            autoencoderDecoder(gen_samples_tensor.view(-1, gen_samples_tensor.shape[1], 1)))
-        gen_samples[i * opt.batch_size:(i + 1) * opt.batch_size, :] = gen_samples_decoded.cpu().data.numpy()
-        # Check to see if there is any nan
-        assert (gen_samples[i, :] != gen_samples[i, :]).any() == False
-
-    gen_samples = np.delete(gen_samples, np.s_[(i + 1) * opt.batch_size:], 0)
-    gen_samples[gen_samples >= 0.5] = 1.0
-    gen_samples[gen_samples < 0.5] = 0.0
-
-    # Trasnform Object array to float
-    gen_samples = gen_samples.astype(np.float32)
-
-    # ave synthetic data
-    np.save(os.path.join(opt.expPATH, "synthetic.npy"), gen_samples, allow_pickle=False)
-
-
-
-###################
-### Evaluation ####
-###################
-# MMD: https://github.com/xuqiantong/GAN-Metrics
-def distance(X, Y, sqrt):
-    nX = X.size(0)
-    nY = Y.size(0)
-    X = X.view(nX, -1).cuda()
-    X2 = (X * X).sum(1).resize_(nX, 1)
-    Y = Y.view(nY, -1).cuda()
-    Y2 = (Y * Y).sum(1).resize_(nY, 1)
-
-    M = torch.zeros(nX, nY)
-    M.copy_(X2.expand(nX, nY) + Y2.expand(nY, nX).transpose(0, 1) - 2 * torch.mm(X, Y.transpose(0, 1)))
-
-    del X, X2, Y, Y2
-
-    if sqrt:
-        M = ((M + M.abs()) / 2).sqrt()
-
-    return M
-
-def mmd(Mxx, Mxy, Myy, sigma) :
-    scale = Mxx.mean()
-    Mxx = torch.exp(-Mxx/(scale*2*sigma*sigma))
-    Mxy = torch.exp(-Mxy/(scale*2*sigma*sigma))
-    Myy = torch.exp(-Myy/(scale*2*sigma*sigma))
-    a = Mxx.mean()+Myy.mean()-2*Mxy.mean()
-    mmd = math.sqrt(max(a, 0))
-
-    return mmd
-
-if opt.evaluate:
-    # Load synthetic data
-    gen_samples = np.load(os.path.join(opt.expPATH, "synthetic.npy"), allow_pickle=False)
-
-    # Load real data
-    real_samples = dataset_train_object.return_data()[0:gen_samples.shape[0], :]
-
-    # Dimenstion wise probability
-    prob_real = np.mean(real_samples, axis=0)
-    prob_syn = np.mean(gen_samples, axis=0)
-
-    p1 = plt.scatter(prob_real, prob_syn, c="b", alpha=0.5, label="WGAN")
-    x_max = max(np.max(prob_real), np.max(prob_syn))
-    x = np.linspace(0, x_max + 0.1, 1000)
-    p2 = plt.plot(x, x, linestyle='-', color='k', label="Ideal")  # solid
-    plt.tick_params(labelsize=12)
-    plt.legend(loc=2, prop={'size': 15})
-    # plt.title('Scatter plot p')
-    # plt.xlabel('x')
-    # plt.ylabel('y')
-    plt.show()
-
-
-    #### Kolmogorov-Smirnov test ###
-    # Ref: https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.stats.ks_2samp.html
-    from scipy import stats
-    rvs1 = gen_samples[0]
-    rvs2 = real_samples[0]
-    pvalue_acum = 0
-    for i in range(gen_samples.shape[0]):
-        stat, pvalue = stats.ks_2samp(rvs1, rvs2)
-        pvalue_acum += pvalue
-    print('KS test pvalue',pvalue_acum / float(gen_samples.shape[0]))
-
-
-    # ref: https://docs.scipy.org/doc/scipy-0.15.1/reference/generated/scipy.stats.ks_2samp.html
-    # This is a two-sided test for the null hypothesis that 2 independent samples are drawn from the same continuous distribution.
-    from scipy import stats
-    import torch_two_sample
-    real_samples = torch.from_numpy(real_samples).float().to(device)
-    gen_samples = torch.from_numpy(gen_samples).float().to(device)
-
-    real = real_samples
-    fake = gen_samples
-    Mxx = distance(real, real, False)
-    Mxy = distance(real, fake, False)
-    Myy = distance(fake, fake, False)
-
-    sigma = 1
-    print('Manual MMD: ', mmd(Mxx, Mxy, Myy, sigma))
-
-    # Package
-    mmd = torch_two_sample.statistics_diff.MMDStatistic(10000, 10000)
-    test_stat = mmd(real_samples, gen_samples,
-                          alphas = [0.5], ret_matrix = False)
-    print('Pytorch package MMD: ', test_stat)

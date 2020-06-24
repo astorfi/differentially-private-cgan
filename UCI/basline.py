@@ -5,7 +5,7 @@ from sklearn.ensemble import (RandomTreesEmbedding, RandomForestClassifier,
                               GradientBoostingClassifier)
 from sklearn.preprocessing import OneHotEncoder
 from sklearn import metrics
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import os
 import numpy as np
 from random import sample
@@ -41,7 +41,8 @@ print('Positive label percentage in train set', train_df['y'].sum()/len(train_df
 X_train, y_train, X_test, y_test = train_df.drop(['y','Unnamed: 0'], axis=1), train_df['y'], test_df.drop(['y','Unnamed: 0'], axis=1), test_df['y']
 
 # Scaling features
-sc = StandardScaler()
+# sc = StandardScaler()
+sc = MinMaxScaler()
 X_train = sc.fit_transform(X_train)
 X_test = sc.transform(X_test)
 

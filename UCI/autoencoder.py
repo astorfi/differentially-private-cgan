@@ -13,17 +13,18 @@ import math
 import dp_optimizer
 from torch.nn.utils import clip_grad_norm_
 import analysis
+import pandas as pd
 
 parser = argparse.ArgumentParser()
 
 # experimentName is the current file name without extension
 experimentName = os.path.splitext(os.path.basename(__file__))[0]
-experimentName = 'rdp'
+experimentName = 'uci'
 
-parser.add_argument("--DATASETPATH", type=str,
-                    default=os.path.expanduser('~/data/MIMIC/processed/out_binary.matrix'),
+parser.add_argument("--DATASETDIR", type=str,
+                    default=os.path.expanduser('~/data/UCI'),
                     help="Dataset file")
-parser.add_argument("--n_epochs_pretrain", type=int, default=10,
+parser.add_argument("--n_epochs_pretrain", type=int, default=20,
                     help="number of epochs of pretraining the autoencoder")
 parser.add_argument("--batch_size", type=int, default=64, help="size of the batches")
 parser.add_argument("--lr", type=float, default=0.001, help="adam: learning rate")
@@ -52,7 +53,8 @@ parser.add_argument("--epoch_save_model_freq", type=int, default=10, help="numbe
 parser.add_argument("--minibatch_averaging", type=bool, default=False, help="Minibatch averaging")
 
 #### Privacy
-parser.add_argument('--noise_multiplier', type=float, default=0.5)
+parser.add_argument('--dp_privacy', type=bool, default=True)
+parser.add_argument('--noise_multiplier', type=float, default=0.0005)
 parser.add_argument('--max_per_sample_grad_norm', type=float, default=1.0)
 parser.add_argument('--delta', type=float, default=1e-5, help="Target delta (default: 1e-5)")
 
@@ -96,25 +98,9 @@ device = torch.device("cuda:0" if opt.cuda else "cpu")
 ##########################
 ### Dataset Processing ###
 ##########################
-
-data = np.load(os.path.expanduser(opt.DATASETPATH), allow_pickle=True)
-
-sampleSize = data.shape[0]
-featureSize = data.shape[1]
-
-# Split train-test
-indices = np.random.permutation(sampleSize)
-training_idx, test_idx = indices[:int(0.8 * sampleSize)], indices[int(0.8 * sampleSize):]
-trainData = data[training_idx, :]
-testData = data[test_idx, :]
-
-# Trasnform Object array to float
-trainData = trainData.astype(np.float32)
-testData = testData.astype(np.float32)
-
-# ave synthetic data
-np.save(os.path.join(opt.expPATH, "dataTrain.npy"), trainData, allow_pickle=False)
-np.save(os.path.join(opt.expPATH, "dataTest.npy"), testData, allow_pickle=False)
+# Read data with the last dimension that is the class label
+trainData = pd.read_csv(os.path.join(opt.DATASETDIR,'train.csv')).drop('Unnamed: 0', axis=1).to_numpy()
+testData = pd.read_csv(os.path.join(opt.DATASETDIR,'test.csv')).drop('Unnamed: 0', axis=1).to_numpy()
 
 
 class Dataset:
@@ -139,7 +125,6 @@ class Dataset:
             idx = idx.tolist()
 
         sample = self.data[idx]
-        sample = np.clip(sample, 0, 1)
 
         if self.transform:
             pass
@@ -167,19 +152,20 @@ feature_size = random_samples.size()[1]
 ###########################
 ## Privacy Calculation ####
 ###########################
-totalsamples = len(dataset_train_object)
-num_batches = len(dataloader_train)
-iterations = opt.n_epochs_pretrain * num_batches
-print('Achieves ({}, {})-DP'.format(
-        analysis.epsilon(
-            totalsamples,
-            opt.batch_size,
-            opt.noise_multiplier,
-            iterations,
-            opt.delta
-        ),
-        opt.delta,
-    ))
+if opt.dp_privacy:
+    totalsamples = len(dataset_train_object)
+    num_batches = len(dataloader_train)
+    iterations = opt.n_epochs_pretrain * num_batches
+    print('Achieves ({}, {})-DP'.format(
+            analysis.epsilon(
+                totalsamples,
+                opt.batch_size,
+                opt.noise_multiplier,
+                iterations,
+                opt.delta
+            ),
+            opt.delta,
+        ))
 
 ####################
 ### Architecture ###
@@ -209,46 +195,30 @@ class Autoencoder(nn.Module):
                       groups=1, bias=True, padding_mode='zeros'),
             nn.BatchNorm1d(8 * n_channels_base),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv1d(in_channels=8 * n_channels_base, out_channels=16 * n_channels_base, kernel_size=5, stride=3,
+            nn.Conv1d(in_channels=8 * n_channels_base, out_channels=16 * n_channels_base, kernel_size=3, stride=1,
                       padding=0, dilation=1,
                       groups=1, bias=True, padding_mode='zeros'),
-            nn.BatchNorm1d(16 * n_channels_base),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv1d(in_channels=16 * n_channels_base, out_channels=32 * n_channels_base, kernel_size=8, stride=1,
-                      padding=0, dilation=1,
-                      groups=1, bias=True, padding_mode='zeros'),
-            nn.Tanh(),
+            nn.ReLU(),
         )
 
         self.decoder = nn.Sequential(
-            nn.ConvTranspose1d(in_channels=32 * n_channels_base, out_channels=16 * n_channels_base, kernel_size=5,
+            nn.ConvTranspose1d(in_channels=16 * n_channels_base, out_channels=8 * n_channels_base, kernel_size=5,
                                stride=1, padding=0, dilation=1,
                                groups=1, bias=True, padding_mode='zeros'),
-            nn.ReLU(),
-            nn.ConvTranspose1d(in_channels=16 * n_channels_base, out_channels=8 * n_channels_base, kernel_size=5,
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.ConvTranspose1d(in_channels=8 * n_channels_base, out_channels=4 * n_channels_base, kernel_size=5,
                                stride=4, padding=0,
                                dilation=1,
                                groups=1, bias=True, padding_mode='zeros'),
-            nn.BatchNorm1d(8 * n_channels_base),
-            nn.ReLU(),
-            nn.ConvTranspose1d(in_channels=8 * n_channels_base, out_channels=4 * n_channels_base, kernel_size=7,
+            nn.BatchNorm1d(4 * n_channels_base),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.ConvTranspose1d(in_channels=4 * n_channels_base, out_channels=2 * n_channels_base, kernel_size=7,
                                stride=4,
                                padding=0, dilation=1,
                                groups=1, bias=True, padding_mode='zeros'),
-            nn.BatchNorm1d(4 * n_channels_base),
-            nn.ReLU(),
-            nn.ConvTranspose1d(in_channels=4 * n_channels_base, out_channels=2 * n_channels_base, kernel_size=7,
-                               stride=3,
-                               padding=0, dilation=1,
-                               groups=1, bias=True, padding_mode='zeros'),
             nn.BatchNorm1d(2 * n_channels_base),
-            nn.ReLU(),
-            nn.ConvTranspose1d(in_channels=2 * n_channels_base, out_channels=n_channels_base, kernel_size=7, stride=2,
-                               padding=0, dilation=1,
-                               groups=1, bias=True, padding_mode='zeros'),
-            nn.BatchNorm1d(n_channels_base),
-            nn.ReLU(),
-            nn.ConvTranspose1d(in_channels=n_channels_base, out_channels=1, kernel_size=3, stride=2,
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.ConvTranspose1d(in_channels=2 * n_channels_base, out_channels=1, kernel_size=7, stride=2,
                                padding=0, dilation=1,
                                groups=1, bias=True, padding_mode='zeros'),
             nn.Sigmoid(),
@@ -257,17 +227,18 @@ class Autoencoder(nn.Module):
     def forward(self, x):
         x = self.encoder(x.view(-1, 1, x.shape[1]))
         x = self.decoder(x)
-        return torch.squeeze(x)
+        return torch.squeeze(x, dim=1)
 
     def decode(self, x):
         x = self.decoder(x)
-        return torch.squeeze(x)
+        return torch.squeeze(x, dim=1)
 
 ###############
 ### Lossess ###
 ###############
 
 
+MSEloss = nn.MSELoss(reduction='sum')
 def autoencoder_loss(x_output, y_target):
     """
     autoencoder_loss
@@ -276,10 +247,21 @@ def autoencoder_loss(x_output, y_target):
     As our matrix is too sparse, first we will take a sum over the features and then do the mean over the batch.
     WARNING: This is NOT equivalent to torch.nn.BCELoss(reduction='mean') as the latter one, mean over both features and batches.
     """
-    epsilon = 1e-12
-    term = y_target * torch.log(x_output + epsilon) + (1. - y_target) * torch.log(1. - x_output + epsilon)
-    loss = torch.mean(-torch.sum(term, 1), 0)
-    return loss
+
+    return MSEloss(x_output, y_target)
+
+# def autoencoder_loss(x_output, y_target):
+#     """
+#     autoencoder_loss
+#     This implementation is equivalent to the following:
+#     torch.nn.BCELoss(reduction='sum') / batch_size
+#     As our matrix is too sparse, first we will take a sum over the features and then do the mean over the batch.
+#     WARNING: This is NOT equivalent to torch.nn.BCELoss(reduction='mean') as the later on, mean over both features and batches.
+#     """
+#     epsilon = 1e-12
+#     term = y_target * torch.log(x_output + epsilon) + (1. - y_target) * torch.log(1. - x_output + epsilon)
+#     loss = torch.mean(-torch.sum(term, 1), 0)
+#     return loss
 
 
 
@@ -338,15 +320,19 @@ if opt.cuda:
 autoencoderModel.apply(weights_init)
 
 # Optimizers
-optimizer_A = dp_optimizer.AdamDP(
-        max_per_sample_grad_norm=opt.max_per_sample_grad_norm,
-        noise_multiplier=opt.noise_multiplier,
-        batch_size=opt.batch_size,
-        params=autoencoderModel.parameters(),
-        lr=opt.lr,
-        betas=(opt.b1, opt.b2),
-        weight_decay=opt.weight_decay,
-    )
+if opt.dp_privacy:
+    optimizer_A = dp_optimizer.AdamDP(
+            max_per_sample_grad_norm=opt.max_per_sample_grad_norm,
+            noise_multiplier=opt.noise_multiplier,
+            batch_size=opt.batch_size,
+            params=autoencoderModel.parameters(),
+            lr=opt.lr,
+            betas=(opt.b1, opt.b2),
+            weight_decay=opt.weight_decay,
+        )
+else:
+    optimizer_A = torch.optim.Adam(autoencoderModel.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2),
+                                   weight_decay=opt.weight_decay)
 
 ################
 ### TRAINING ###
@@ -393,32 +379,50 @@ for epoch_pre in range(opt.n_epochs_pretrain):
         # # Reset gradients (if you comment below line, it would be a mess. Think why?!!!!!!!!!)
         optimizer_A.zero_grad()
 
-        # Microbatch processing
-        for i in range(opt.batch_size):
+        if opt.dp_privacy:
+            # Microbatch processing
+            for i in range(opt.batch_size):
 
-            # Extract microbatch
-            micro_batch = real_samples[i:i+1,:]
+                # Extract microbatch
+                micro_batch = real_samples[i:i+1,:]
+
+                # Reset grads
+                optimizer_A.zero_grad()
+
+                # Generate a batch of images
+                recons_samples = autoencoderModel(micro_batch)
+
+                # Loss measures generator's ability to fool the discriminator
+                a_loss = autoencoder_loss(recons_samples, micro_batch)
+
+                # Backward
+                a_loss.backward()
+
+                # Bound sensitivity
+                optimizer_A.clip_grads_()
+
+            ################### Privacy ################
+
+            # Step
+            optimizer_A.add_noise_()
+            optimizer_A.step()
+        else:
 
             # Reset grads
             optimizer_A.zero_grad()
 
             # Generate a batch of images
-            recons_samples = autoencoderModel(micro_batch)
+            recons_samples = autoencoderModel(real_samples)
 
             # Loss measures generator's ability to fool the discriminator
-            a_loss = autoencoder_loss(recons_samples, micro_batch)
+            a_loss = autoencoder_loss(recons_samples, real_samples)
 
             # Backward
             a_loss.backward()
 
-            # Bound sensitivity
-            optimizer_A.clip_grads_()
+            # Step
+            optimizer_A.step()
 
-            ################### Privacy ################
-
-        # Step
-        optimizer_A.add_noise_()
-        optimizer_A.step()
 
         batches_done = epoch_pre * len(dataloader_train) + i_batch + 1
         if batches_done % opt.sample_interval == 0:
