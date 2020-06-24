@@ -164,8 +164,8 @@ def add_noise_(model):
 ### Dataset Processing ###
 ##########################
 # Read data with the last dimension that is the class label
-trainData = pd.read_csv(os.path.join(opt.DATASETDIR,'train.csv')).drop('Unnamed: 0', axis=1).to_numpy()
-testData = pd.read_csv(os.path.join(opt.DATASETDIR,'test.csv')).drop('Unnamed: 0', axis=1).to_numpy()
+trainData = pd.read_csv(os.path.join(opt.DATASETDIR, 'train.csv')).drop('Unnamed: 0', axis=1).to_numpy()
+testData = pd.read_csv(os.path.join(opt.DATASETDIR, 'test.csv')).drop('Unnamed: 0', axis=1).to_numpy()
 
 
 class Dataset:
@@ -539,8 +539,11 @@ if opt.generate:
     #### Load model and optimizer #######
     #####################################
 
+    # Class label
+    classLabel = 1.0
+
     # Loading the checkpoint
-    checkpoint = torch.load(os.path.join(opt.modelPATH, "model_epoch_200_0.pth"))
+    checkpoint = torch.load(os.path.join(opt.modelPATH, "model_epoch_160_%d.pth" % (int(classLabel))))
 
     # Load models
     generatorModel.load_state_dict(checkpoint['Generator_state_dict'])
@@ -557,11 +560,11 @@ if opt.generate:
     #######################################################
 
     # Load real data
-    real_samples = dataset_train_object.return_data()
-    num_fake_samples = real_samples.shape[0]
+    real_samples_train = dataset_train_object.return_data()
+    num_fake_samples = real_samples_train.shape[0]
 
     # Generate a batch of samples
-    gen_samples = np.zeros_like(real_samples, dtype=type(real_samples))
+    gen_samples = np.zeros_like(real_samples_train, dtype=type(real_samples_train))
     n_batches = int(num_fake_samples / opt.batch_size)
     for i in range(n_batches):
         # Sample noise as generator input
@@ -578,14 +581,13 @@ if opt.generate:
 
     # Fix labels for the specific class
     labels = gen_samples[:,-1]
-    labels = 0.0
-    gen_samples[:, -1] = labels
+    gen_samples[:, -1] = classLabel
 
     # Trasnform Object array to float
     gen_samples = gen_samples.astype(np.float32)
 
     # ave synthetic data
-    np.save(os.path.join(opt.expPATH, "synthetic_0.npy"), gen_samples, allow_pickle=False)
+    np.save(os.path.join(opt.expPATH, "synthetic_%d.npy" % (int(classLabel))), gen_samples, allow_pickle=False)
 
     sys.exit()
 
@@ -602,7 +604,7 @@ if opt.evaluate:
     gen_samples = np.concatenate((gen_samples_0,gen_samples_1), axis=0)
 
     # Load real data
-    real_samples = dataset_train_object.return_data()[0:gen_samples.shape[0], :]
+    real_samples = dataset_train_object.return_data()
 
     # Train/test split
     train_f, test_f = skl.train_test_split(gen_samples,

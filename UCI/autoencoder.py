@@ -198,7 +198,7 @@ class Autoencoder(nn.Module):
             nn.Conv1d(in_channels=8 * n_channels_base, out_channels=16 * n_channels_base, kernel_size=3, stride=1,
                       padding=0, dilation=1,
                       groups=1, bias=True, padding_mode='zeros'),
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.ReLU(),
         )
 
         self.decoder = nn.Sequential(
@@ -221,7 +221,7 @@ class Autoencoder(nn.Module):
             nn.ConvTranspose1d(in_channels=2 * n_channels_base, out_channels=1, kernel_size=7, stride=2,
                                padding=0, dilation=1,
                                groups=1, bias=True, padding_mode='zeros'),
-            nn.ReLU(),
+            nn.Sigmoid(),
         )
 
     def forward(self, x):
