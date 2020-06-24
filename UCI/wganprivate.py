@@ -24,7 +24,7 @@ parser.add_argument("--DATASETDIR", type=str,
                     default=os.path.expanduser('~/data/UCI'),
                     help="Dataset file")
 
-parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
+parser.add_argument("--n_epochs", type=int, default=1000, help="number of epochs of training")
 parser.add_argument("--n_epochs_pretrain", type=int, default=10,
                     help="number of epochs of pretraining the autoencoder")
 parser.add_argument("--batch_size", type=int, default=128, help="size of the batches")
@@ -161,7 +161,7 @@ trainData = pd.read_csv(os.path.join(opt.DATASETDIR,'train.csv')).drop('Unnamed:
 testData = pd.read_csv(os.path.join(opt.DATASETDIR,'test.csv')).drop('Unnamed: 0', axis=1).to_numpy()
 
 # Class specific data
-trainData = trainData[trainData[:,-1] == 0.0]
+trainData = trainData[trainData[:,-1] == 1.0]
 
 class Dataset:
     def __init__(self, data, transform=None):
@@ -256,31 +256,40 @@ class Autoencoder(nn.Module):
             nn.Conv1d(in_channels=8 * n_channels_base, out_channels=16 * n_channels_base, kernel_size=3, stride=1,
                       padding=0, dilation=1,
                       groups=1, bias=True, padding_mode='zeros'),
-            nn.ReLU(),
+            nn.LeakyReLU(0.2, inplace=True),
         )
 
         self.decoder = nn.Sequential(
             nn.ConvTranspose1d(in_channels=16 * n_channels_base, out_channels=8 * n_channels_base, kernel_size=5,
                                stride=1, padding=0, dilation=1,
                                groups=1, bias=True, padding_mode='zeros'),
-            nn.ReLU(),
+            nn.LeakyReLU(0.2, inplace=True),
             nn.ConvTranspose1d(in_channels=8 * n_channels_base, out_channels=4 * n_channels_base, kernel_size=5,
                                stride=4, padding=0,
                                dilation=1,
                                groups=1, bias=True, padding_mode='zeros'),
             nn.BatchNorm1d(4 * n_channels_base),
-            nn.ReLU(),
+            nn.LeakyReLU(0.2, inplace=True),
             nn.ConvTranspose1d(in_channels=4 * n_channels_base, out_channels=2 * n_channels_base, kernel_size=7,
                                stride=4,
                                padding=0, dilation=1,
                                groups=1, bias=True, padding_mode='zeros'),
             nn.BatchNorm1d(2 * n_channels_base),
-            nn.ReLU(),
+            nn.LeakyReLU(0.2, inplace=True),
             nn.ConvTranspose1d(in_channels=2 * n_channels_base, out_channels=1, kernel_size=7, stride=2,
                                padding=0, dilation=1,
                                groups=1, bias=True, padding_mode='zeros'),
-            nn.Sigmoid(),
+            nn.ReLU(),
         )
+
+    def forward(self, x):
+        x = self.encoder(x.view(-1, 1, x.shape[1]))
+        x = self.decoder(x)
+        return torch.squeeze(x, dim=1)
+
+    def decode(self, x):
+        x = self.decoder(x)
+        return torch.squeeze(x, dim=1)
 
     def forward(self, x):
         x = self.encoder(x.view(-1, 1, x.shape[1]))
@@ -313,7 +322,7 @@ class Generator(nn.Module):
         # nn.BatchNorm1d(ngf, eps=0.001, momentum=0.01),
         # nn.LeakyReLU(0.2, inplace=True),
         nn.ConvTranspose1d(ngf * 2, 1, 4, 2, 1),
-        nn.ReLU(),
+        nn.LeakyReLU(0.2, inplace=True),
         )
 
     def forward(self, x):
