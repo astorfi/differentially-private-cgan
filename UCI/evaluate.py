@@ -71,7 +71,7 @@ parser.add_argument("--pretrained_status", type=bool, default=True, help="If wan
 parser.add_argument("--training", type=bool, default=False, help="Training status")
 parser.add_argument("--resume", type=bool, default=False, help="Training status")
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
-parser.add_argument("--generate", type=bool, default=True, help="Generating Sythetic Data")
+parser.add_argument("--generate", type=bool, default=False, help="Generating Sythetic Data")
 parser.add_argument("--evaluate", type=bool, default=True, help="Evaluation status")
 parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/' + experimentName),
                     help="Experiment path")
@@ -564,7 +564,7 @@ if opt.generate:
     num_fake_samples = real_samples_train.shape[0]
 
     # Generate a batch of samples
-    gen_samples = np.zeros_like(real_samples_train, dtype=type(real_samples_train))
+    gen_samples = np.zeros((num_fake_samples, real_samples_train.shape[1]), dtype=type(real_samples_train))
     n_batches = int(num_fake_samples / opt.batch_size)
     for i in range(n_batches):
         # Sample noise as generator input
@@ -592,7 +592,6 @@ if opt.generate:
     sys.exit()
 
 
-
 ###################
 ### Evaluation ####
 ###################
@@ -604,28 +603,51 @@ if opt.evaluate:
     gen_samples = np.concatenate((gen_samples_0,gen_samples_1), axis=0)
 
     # Load real data
-    real_samples = dataset_train_object.return_data()
+    real_train = dataset_train_object.return_data()
+    real_test = dataset_test_object.return_data()
 
     # Train/test split
     train_f, test_f = skl.train_test_split(gen_samples,
                                              test_size=0.2,
                                              stratify=gen_samples[:,-1])
-
-    train_r, test_r = skl.train_test_split(real_samples,
-                                       test_size=0.2,
-                                       stratify=real_samples[:, -1])
-
-    # Associated features
+    #
+    # train_r, test_r = skl.train_test_split(real_samples,
+    #                                    test_size=0.2,
+    #                                    stratify=real_samples[:, -1])
+    #
+    # # Associated features
     X_train_f, y_train_f, X_test_f, y_test_f = train_f[:,:-1], train_f[:,-1], test_f[:,:-1], test_f[:,-1]
-    X_train_r, y_train_r, X_test_r, y_test_r = train_r[:,:-1], train_r[:,-1], test_r[:,:-1], test_r[:,-1]
+    X_train_r, y_train_r, X_test_r, y_test_r = real_train[:,:-1], real_train[:,-1], real_test[:,:-1], real_test[:,-1]
 
     ###############################
     ######## Classifier ###########
     ###############################
 
+    ########## Train: Real Test: Real ########
+
     # Supervised transformation based on random forests
     # Good to know about feature transformation
-    n_estimator = 10
+    n_estimator = 5
+    # cls = RandomForestClassifier(max_depth=5, n_estimators=n_estimator)
+    cls = GradientBoostingClassifier(n_estimators=n_estimator)
+    cls.fit(X_train_r, y_train_r)
+    y_pred_rf = cls.predict_proba(X_test_r)[:, 1]
+
+    # ROC
+    fpr_rf_lm, tpr_rf_lm, _ = metrics.roc_curve(y_test_r, y_pred_rf)
+    print('AUROC: ', metrics.auc(fpr_rf_lm, tpr_rf_lm))
+
+    # PR
+    precision, recall, thresholds = metrics.precision_recall_curve(y_test_r, y_pred_rf)
+    AUPRC = metrics.auc(recall, precision)
+    print('AP: ', metrics.average_precision_score(y_test_r, y_pred_rf))
+    print('Area under the precision recall curve: ', AUPRC)
+
+    ########## Train: Synthetic Test: Real ########
+
+    # Supervised transformation based on random forests
+    # Good to know about feature transformation
+    n_estimator = 5
     # cls = RandomForestClassifier(max_depth=5, n_estimators=n_estimator)
     cls = GradientBoostingClassifier(n_estimators=n_estimator)
     cls.fit(X_train_f, y_train_f)
@@ -639,6 +661,26 @@ if opt.evaluate:
     precision, recall, thresholds = metrics.precision_recall_curve(y_test_r, y_pred_rf)
     AUPRC = metrics.auc(recall, precision)
     print('AP: ', metrics.average_precision_score(y_test_r, y_pred_rf))
+    print('Area under the precision recall curve: ', AUPRC)
+
+    ########## Train: Synthetic Test: Synthetic ########
+
+    # Supervised transformation based on random forests
+    # Good to know about feature transformation
+    n_estimator = 5
+    # cls = RandomForestClassifier(max_depth=5, n_estimators=n_estimator)
+    cls = GradientBoostingClassifier(n_estimators=n_estimator)
+    cls.fit(X_train_f, y_train_f)
+    y_pred_rf = cls.predict_proba(X_test_f)[:, 1]
+
+    # ROC
+    fpr_rf_lm, tpr_rf_lm, _ = metrics.roc_curve(y_test_f, y_pred_rf)
+    print('AUROC: ', metrics.auc(fpr_rf_lm, tpr_rf_lm))
+
+    # PR
+    precision, recall, thresholds = metrics.precision_recall_curve(y_test_f, y_pred_rf)
+    AUPRC = metrics.auc(recall, precision)
+    print('AP: ', metrics.average_precision_score(y_test_f, y_pred_rf))
     print('Area under the precision recall curve: ', AUPRC)
 
 
