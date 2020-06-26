@@ -9,6 +9,8 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import os
 import numpy as np
 from random import sample
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 # Read data
 DATASETDIR = os.path.expanduser('~/data/UCI')
@@ -17,6 +19,7 @@ df = pd.read_csv(os.path.join(DATASETDIR, 'data.csv'))
 # Set seizure activity label with 1 and the others with zero
 # Info about initial class labels: https://archive.ics.uci.edu/ml/datasets/Epileptic+Seizure+Recognition
 # df['y'] = (df['y'] == 1).replace(True,1).replace(False,0)
+print('Class distribution:\n', df.y.value_counts())
 
 # Train/test split
 train_df, test_df = skl.train_test_split(df,
@@ -47,8 +50,8 @@ pd.DataFrame(test).to_csv(os.path.join(DATASETDIR,'testmulticlass.csv'))
 # Supervised transformation based on random forests
 # Good to know about feature transformation
 n_estimator=100
-# cls = RandomForestClassifier(max_depth=5, n_estimators=n_estimator)
-cls = GradientBoostingClassifier(n_estimators=n_estimator)
+cls = RandomForestClassifier(max_depth=5, n_estimators=n_estimator)
+# cls = GradientBoostingClassifier(n_estimators=n_estimator)
 cls.fit(X_train, y_train)
 y_pred = cls.predict(X_test)
 # print(np.sum(y_pred_rf==y_test) / y_test.shape[0])
@@ -60,4 +63,7 @@ c_report = metrics.classification_report(y_test, y_pred)
 print('Classification report:\n', c_report)
 
 print("confusion matrix:")
-print(metrics.confusion_matrix(y_test, pred))
+cf_matrix = metrics.confusion_matrix(y_test, y_pred)
+print(cf_matrix)
+ax = sns.heatmap(cf_matrix, annot=True)
+plt.show()
