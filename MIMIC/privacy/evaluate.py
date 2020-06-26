@@ -11,6 +11,8 @@ import torch.nn as nn
 import torch
 import math
 import dp_optimizer
+import seaborn as sns
+from sklearn.linear_model import LogisticRegression
 
 parser = argparse.ArgumentParser()
 
@@ -562,7 +564,7 @@ if opt.generate:
     #####################################
 
     # Loading the checkpoint
-    checkpoint = torch.load(os.path.join(opt.modelPATH, "model_epoch_80.pth"))
+    checkpoint = torch.load(os.path.join(opt.modelPATH, "model_epoch_150.pth"))
 
     # Load models
     generatorModel.load_state_dict(checkpoint['Generator_state_dict'])
@@ -641,58 +643,174 @@ def mmd(Mxx, Mxy, Myy, sigma) :
     return mmd
 
 if opt.evaluate:
+    from sklearn.metrics import f1_score, roc_auc_score
+    import pandas as pd
+    from sklearn.ensemble import (RandomTreesEmbedding, RandomForestClassifier,
+                                  GradientBoostingClassifier)
     # Load synthetic data
     gen_samples = np.load(os.path.join(opt.expPATH, "synthetic.npy"), allow_pickle=False)
 
     # Load real data
-    real_samples = dataset_train_object.return_data()[0:gen_samples.shape[0], :]
+    real_train = dataset_train_object.return_data()[0:gen_samples.shape[0], :]
+    real_test = dataset_test_object.return_data()[0:gen_samples.shape[0], :]
 
-    # Dimenstion wise probability
-    prob_real = np.mean(real_samples, axis=0)
-    prob_syn = np.mean(gen_samples, axis=0)
+    ##### Tests ###
+    dwprob = True
+    dwpred = True
+    ktest = False
+    MMDtest = False
 
-    p1 = plt.scatter(prob_real, prob_syn, c="b", alpha=0.5, label="WGAN")
-    x_max = max(np.max(prob_real), np.max(prob_syn))
-    x = np.linspace(0, x_max + 0.1, 1000)
-    p2 = plt.plot(x, x, linestyle='-', color='k', label="Ideal")  # solid
-    plt.tick_params(labelsize=12)
-    plt.legend(loc=2, prop={'size': 15})
-    # plt.title('Scatter plot p')
-    # plt.xlabel('x')
-    # plt.ylabel('y')
-    plt.show()
+    if dwprob:
+        # Dimenstion wise probability
+        prob_real = np.mean(real_train, axis=0)
+        prob_syn = np.mean(gen_samples, axis=0)
 
-
-    #### Kolmogorov-Smirnov test ###
-    # Ref: https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.stats.ks_2samp.html
-    from scipy import stats
-    rvs1 = gen_samples[0]
-    rvs2 = real_samples[0]
-    pvalue_acum = 0
-    for i in range(gen_samples.shape[0]):
-        stat, pvalue = stats.ks_2samp(rvs1, rvs2)
-        pvalue_acum += pvalue
-    print('KS test pvalue',pvalue_acum / float(gen_samples.shape[0]))
+        p1 = plt.scatter(prob_real, prob_syn, c="b", alpha=0.5, label="WGAN")
+        x_max = max(np.max(prob_real), np.max(prob_syn))
+        x = np.linspace(0, x_max + 0.1, 1000)
+        p2 = plt.plot(x, x, linestyle='-', color='k', label="Ideal")  # solid
+        plt.tick_params(labelsize=12)
+        plt.legend(loc=2, prop={'size': 15})
+        # plt.title('Scatter plot p')
+        # plt.xlabel('x')
+        # plt.ylabel('y')
+        plt.show()
 
 
-    # ref: https://docs.scipy.org/doc/scipy-0.15.1/reference/generated/scipy.stats.ks_2samp.html
-    # This is a two-sided test for the null hypothesis that 2 independent samples are drawn from the same continuous distribution.
-    from scipy import stats
-    import torch_two_sample
-    real_samples = torch.from_numpy(real_samples).float().to(device)
-    gen_samples = torch.from_numpy(gen_samples).float().to(device)
+    def isolate_column(df, column):
+        """Splits a given dataframe into a column and the rest of the dataframe."""
+        return df.drop(columns=[column]).values.astype('float32'), df[column].values.astype('float32')
 
-    real = real_samples
-    fake = gen_samples
-    Mxx = distance(real, real, False)
-    Mxy = distance(real, fake, False)
-    Myy = distance(fake, fake, False)
 
-    sigma = 1
-    print('Manual MMD: ', mmd(Mxx, Mxy, Myy, sigma))
+    def get_prediction_score(X_train, y_train, X_test, y_test, Model, score):
+        """Trains a model on training data and returns the quality of the predictions given test data and expected output."""
+        if len(np.unique(y_train)) == 0 or len(np.unique(y_test)) == 0:
+            raise
 
-    # Package
-    mmd = torch_two_sample.statistics_diff.MMDStatistic(10000, 10000)
-    test_stat = mmd(real_samples, gen_samples,
-                          alphas = [0.5], ret_matrix = False)
-    print('Pytorch package MMD: ', test_stat)
+        # Train model on synthetic data, see how well it predicts holdout real data
+        clf = Model()
+        try:
+            clf.fit(X_train, y_train)
+            prediction = clf.predict_proba(X_test)[:, 1]
+        except:
+            # When we have all zeros. We need at least two classes for clf.fit(X_train, y_train).
+            # We fill labels with all zeros
+            prediction = np.full(y_test.shape, y_train[0])
+
+        """
+        except ValueError as e:
+            # Only one label present, so simply predict all examples as that label
+            prediction = np.full(y_test.shape, val)
+        """
+
+        # zero_division=1 is very important to use
+        return score(y_test, prediction.round(), zero_division=1)
+
+
+    def feature_prediction_evaluation(
+            train,
+            test,
+            synthetic,
+            Model,
+            score=f1_score,
+            training_proportion=0.8,
+            plot=False
+    ):
+        """Runs the evaluation method given real and fake data.
+        real: pd.DataFrame
+        synthetic: pd.DataFrame, with columns identical to real
+        Model: func, takes no arguments and returns object with fit and predict functions implemented, e.g. sklearn.linear_model.LogisticRegression
+        score: func, takes in a ground truth and a prediction and returns the score of the prediction
+        training_proportion: float, proportion of real data to be used for fitting
+        plot: bool, whether or not to show corresponding evaluation plot
+        """
+        if set(train.columns) != set(synthetic.columns):
+            raise Exception('Columns of given datasets are not identical.')
+
+        real_classifier_scores, synthetic_classifier_scores = [], []
+        for i, column in enumerate(train.columns):
+            X_train_real, y_train_real = isolate_column(train, column)
+            X_train_synthetic, y_train_synthetic = isolate_column(synthetic, column)
+            X_test, y_test = isolate_column(test, column)
+
+            """
+            X_train_real, y_train_real = balance(X_train_real, y_train_real)
+            X_train_synthetic, y_train_synthetic = balance(X_train_synthetic, y_train_synthetic)
+            """
+
+            try:
+                real_score = get_prediction_score(X_train_real, y_train_real, X_test, y_test, Model, score)
+                synthetic_score = get_prediction_score(X_train_synthetic, y_train_synthetic, X_test, y_test, Model,
+                                                       score)
+
+                real_classifier_scores.append(real_score)
+                synthetic_classifier_scores.append(synthetic_score)
+
+                print(i, real_score, synthetic_score)
+            except Exception as e:
+                print(e)
+                print(i, 'Failed.')
+
+        if plot:
+            plt.scatter(real_classifier_scores, synthetic_classifier_scores, s=2, c='blue')
+            plt.title('')
+            plt.xlabel('Real Data')
+            plt.ylabel('Generated Data')
+            plt.axis((0., 1., 0., 1.))
+            plt.plot((0, 1), (0, 1))
+            plt.savefig('dw-pred.png')
+            pd.DataFrame(data={'real': real_classifier_scores, 'synthetic': synthetic_classifier_scores}).to_csv(
+                'dw-pred.csv')
+            print('Mean F-1 Score for real data', np.mean(real_classifier_scores))
+            print('Mean F-1 Score for synthetic data', np.mean(synthetic_classifier_scores))
+
+        return sum(map(lambda pair: (pair[0] - pair[1]) ** 2, zip(real_classifier_scores, synthetic_classifier_scores)))
+
+
+    if dwpred:
+        # Data to Pandas DataFrame
+        train = pd.DataFrame(real_train.astype('int32'))
+        test = pd.DataFrame(real_test.astype('int32'))
+        synthetic = pd.DataFrame(gen_samples.astype('int32'))
+        n_estimator = 100
+        cls=RandomForestClassifier(max_depth=5, n_estimators=n_estimator)
+        print('Score achieved: {}'.format(feature_prediction_evaluation(train, test, synthetic,
+                                                                        Model=lambda: cls,
+                                                                        score=f1_score, plot=True)))
+
+    if ktest:
+        #### Kolmogorov-Smirnov test ###
+        # Ref: https://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.stats.ks_2samp.html
+        from scipy import stats
+
+        rvs1 = gen_samples[0]
+        rvs2 = real_samples[0]
+        pvalue_acum = 0
+        for i in range(gen_samples.shape[0]):
+            stat, pvalue = stats.ks_2samp(rvs1, rvs2)
+            pvalue_acum += pvalue
+        print('KS test pvalue', pvalue_acum / float(gen_samples.shape[0]))
+
+    if MMDtest:
+        # ref: https://docs.scipy.org/doc/scipy-0.15.1/reference/generated/scipy.stats.ks_2samp.html
+        # This is a two-sided test for the null hypothesis that 2 independent samples are drawn from the same continuous distribution.
+        from scipy import stats
+        import torch_two_sample
+
+        real_samples = torch.from_numpy(real_samples).float().to(device)
+        gen_samples = torch.from_numpy(gen_samples).float().to(device)
+
+        real = real_samples
+        fake = gen_samples
+        Mxx = distance(real, real, False)
+        Mxy = distance(real, fake, False)
+        Myy = distance(fake, fake, False)
+
+        sigma = 1
+        print('Manual MMD: ', mmd(Mxx, Mxy, Myy, sigma))
+
+        # Package
+        mmd = torch_two_sample.statistics_diff.MMDStatistic(10000, 10000)
+        test_stat = mmd(real_samples, gen_samples,
+                        alphas=[0.5], ret_matrix=False)
+        print('Pytorch package MMD: ', test_stat)
