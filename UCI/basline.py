@@ -9,6 +9,8 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import os
 import numpy as np
 from random import sample
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 # Read data
 DATASETDIR = os.path.expanduser('~/data/UCI')
@@ -22,6 +24,7 @@ df['y'] = (df['y'] == 1).replace(True,1).replace(False,0)
 train_df, test_df = skl.train_test_split(df,
                                    test_size = 0.2,
                                    stratify = df['y'])
+
 
 # Report positive labels distribution
 print('Positive label percentage in train set', train_df['y'].sum()/len(train_df))
@@ -39,6 +42,10 @@ print('Positive label percentage in train set', train_df['y'].sum()/len(train_df
 
 # Associated features
 X_train, y_train, X_test, y_test = train_df.drop(['y','Unnamed: 0'], axis=1), train_df['y'], test_df.drop(['y','Unnamed: 0'], axis=1), test_df['y']
+
+corcof = np.corrcoef(np.transpose(X_train))
+ax = sns.heatmap(corcof, annot=False)
+plt.show()
 
 # Scaling features
 # sc = StandardScaler()
