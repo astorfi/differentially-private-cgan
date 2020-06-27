@@ -71,7 +71,7 @@ parser.add_argument("--pretrained_status", type=bool, default=True, help="If wan
 parser.add_argument("--training", type=bool, default=False, help="Training status")
 parser.add_argument("--resume", type=bool, default=False, help="Training status")
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
-parser.add_argument("--generate", type=bool, default=False, help="Generating Sythetic Data")
+parser.add_argument("--generate", type=bool, default=True, help="Generating Sythetic Data")
 parser.add_argument("--evaluate", type=bool, default=True, help="Evaluation status")
 parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/' + experimentName),
                     help="Experiment path")
@@ -540,10 +540,10 @@ if opt.generate:
     #####################################
 
     # Class label
-    classLabel = 0.0
+    classLabel = 1.0
 
     # Loading the checkpoint
-    checkpoint = torch.load(os.path.join(opt.modelPATH, "model_epoch_150_%d.pth" % (int(classLabel))))
+    checkpoint = torch.load(os.path.join(opt.modelPATH, "model_epoch_100_%d.pth" % (int(classLabel))))
 
     # Load models
     generatorModel.load_state_dict(checkpoint['Generator_state_dict'])

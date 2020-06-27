@@ -24,7 +24,7 @@ parser.add_argument("--DATASETDIR", type=str,
                     default=os.path.expanduser('~/data/UCI'),
                     help="Dataset file")
 
-parser.add_argument("--n_epochs", type=int, default=150, help="number of epochs of training")
+parser.add_argument("--n_epochs", type=int, default=1000, help="number of epochs of training")
 parser.add_argument("--n_epochs_pretrain", type=int, default=10,
                     help="number of epochs of pretraining the autoencoder")
 parser.add_argument("--batch_size", type=int, default=128, help="size of the batches")
@@ -55,7 +55,7 @@ parser.add_argument("--minibatch_averaging", type=bool, default=False, help="Min
 
 #### Privacy
 parser.add_argument('--dp_privacy', type=bool, default=True)
-parser.add_argument('--noise_multiplier', type=float, default=3.1)
+parser.add_argument('--noise_multiplier', type=float, default=0.00005)
 parser.add_argument('--max_per_sample_grad_norm', type=float, default=1.0)
 parser.add_argument('--delta', type=float, default=1e-5, help="Target delta (default: 1e-5)")
 
