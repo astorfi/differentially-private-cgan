@@ -166,9 +166,9 @@ training_idx, test_idx = indices[:int(0.8 * sampleSize)], indices[int(0.8 * samp
 trainData = data[training_idx, :]
 testData = data[test_idx, :]
 
-# Trasnform Object array to float
-trainData = trainData.astype(np.float32)
-testData = testData.astype(np.float32)
+# # Trasnform Object array to float
+# trainData = trainData.astype(np.float32)
+# testData = testData.astype(np.float32)
 
 # ave synthetic data
 np.save(os.path.join(opt.expPATH, "dataTrain.npy"), trainData, allow_pickle=False)
@@ -654,6 +654,17 @@ if opt.evaluate:
     real_train = dataset_train_object.return_data()[0:gen_samples.shape[0], :]
     real_test = dataset_test_object.return_data()[0:gen_samples.shape[0], :]
 
+    # Pick top repeated medical codes
+    top_n = 10
+    top_n_idx = np.argsort(np.mean(real_train, axis=0))[real_train.shape[1]-top_n: real_train.shape[1]]
+    # We sort to maintain the order of codes as appear in the main data
+    top_n_idx = np.sort(top_n_idx)
+
+    # Now we pick the selected features
+    real_train = real_train[:, top_n_idx]
+    real_test = real_test[:, top_n_idx]
+    gen_samples = gen_samples[:, top_n_idx]
+
     ##### Tests ###
     dwprob = True
     dwpred = True
@@ -711,7 +722,7 @@ if opt.evaluate:
             train,
             test,
             synthetic,
-            Model,
+            Model=lambda: LogisticRegression(solver='lbfgs', max_iter=300),
             score=f1_score,
             training_proportion=0.8,
             plot=False
@@ -773,9 +784,9 @@ if opt.evaluate:
         test = pd.DataFrame(real_test.astype('int32'))
         synthetic = pd.DataFrame(gen_samples.astype('int32'))
         n_estimator = 100
-        cls=RandomForestClassifier(max_depth=5, n_estimators=n_estimator)
+        # cls=RandomForestClassifier(max_depth=5, n_estimators=n_estimator)
         print('Score achieved: {}'.format(feature_prediction_evaluation(train, test, synthetic,
-                                                                        Model=lambda: cls,
+                                                                        Model=lambda: LogisticRegression(solver='liblinear',max_iter=100),
                                                                         score=f1_score, plot=True)))
 
     if ktest:

@@ -830,9 +830,20 @@ if opt.evaluate:
     real_train = dataset_train_object.return_data()[0:gen_samples.shape[0], :]
     real_test = dataset_test_object.return_data()[0:gen_samples.shape[0], :]
 
+    # Pick top repeated medical codes
+    top_n = 10
+    top_n_idx = np.argsort(np.mean(real_train, axis=0))[real_train.shape[1]-top_n: real_train.shape[1]]
+    # We sort to maintain the order of codes as appear in the main data
+    top_n_idx = np.sort(top_n_idx)
+
+    # Now we pick the selected features
+    real_train = real_train[:,top_n_idx]
+    real_test = real_test[:,top_n_idx]
+    gen_samples = gen_samples[:,top_n_idx]
+
     ##### Tests ###
     dwprob = True
-    dwpred = False
+    dwpred = True
     ktest = False
     MMDtest = False
 
