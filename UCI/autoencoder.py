@@ -22,7 +22,7 @@ experimentName = os.path.splitext(os.path.basename(__file__))[0]
 experimentName = 'uci'
 
 parser.add_argument("--DATASETDIR", type=str,
-                    default=os.path.expanduser('~/data/UCI'),
+                    default=os.path.expanduser('~/workspace/data/UCI'),
                     help="Dataset file")
 parser.add_argument("--n_epochs_pretrain", type=int, default=20,
                     help="number of epochs of pretraining the autoencoder")
@@ -31,7 +31,7 @@ parser.add_argument("--lr", type=float, default=0.001, help="adam: learning rate
 parser.add_argument("--weight_decay", type=float, default=0.00001, help="l2 regularization")
 parser.add_argument("--b1", type=float, default=0.9, help="adam: decay of first order momentum of gradient")
 parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
-parser.add_argument("--n_cpu", type=int, default=8, help="number of cpu threads to use during batch generation")
+parser.add_argument("--n_cpu", type=int, default=32, help="number of cpu threads to use during batch generation")
 parser.add_argument('--n_iter_D', type=int, default=5, help='number of D iters per each G iter')
 
 # Check the details
@@ -64,9 +64,9 @@ parser.add_argument("--resume", type=bool, default=False, help="Training status"
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
 parser.add_argument("--generate", type=bool, default=False, help="Generating Sythetic Data")
 parser.add_argument("--evaluate", type=bool, default=False, help="Evaluation status")
-parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/' + experimentName),
+parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/workspace/experiments/pytorch/' + experimentName),
                     help="Experiment path")
-parser.add_argument("--modelPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/' + experimentName + '/model'),
+parser.add_argument("--modelPATH", type=str, default=os.path.expanduser('~/workspace/experiments/pytorch/' + experimentName + '/model'),
                     help="Experiment path")
 opt = parser.parse_args()
 print(opt)

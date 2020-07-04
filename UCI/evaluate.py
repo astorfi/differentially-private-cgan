@@ -22,6 +22,7 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import os
 import numpy as np
 from random import sample
+import sys
 
 parser = argparse.ArgumentParser()
 
@@ -30,7 +31,7 @@ experimentName = os.path.splitext(os.path.basename(__file__))[0]
 experimentName = 'uci'
 
 parser.add_argument("--DATASETDIR", type=str,
-                    default=os.path.expanduser('~/data/UCI'),
+                    default=os.path.expanduser('~/workspace/data/UCI'),
                     help="Dataset file")
 
 parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
@@ -73,9 +74,9 @@ parser.add_argument("--resume", type=bool, default=False, help="Training status"
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
 parser.add_argument("--generate", type=bool, default=True, help="Generating Sythetic Data")
 parser.add_argument("--evaluate", type=bool, default=True, help="Evaluation status")
-parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/' + experimentName),
+parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/workspace/experiments/pytorch/' + experimentName),
                     help="Experiment path")
-parser.add_argument("--modelPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/' + experimentName + '/model'),
+parser.add_argument("--modelPATH", type=str, default=os.path.expanduser('~/workspace/experiments/pytorch/' + experimentName + '/model'),
                     help="Model path")
 opt = parser.parse_args()
 print(opt)

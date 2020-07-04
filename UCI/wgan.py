@@ -20,7 +20,7 @@ parser = argparse.ArgumentParser()
 experimentName = os.path.splitext(os.path.basename(__file__))[0]
 
 parser.add_argument("--DATASETDIR", type=str,
-                    default=os.path.expanduser('~/data/UCI'),
+                    default=os.path.expanduser('~/workspace/data/UCI'),
                     help="Dataset file")
 
 parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
@@ -53,12 +53,12 @@ parser.add_argument("--epoch_save_model_freq", type=int, default=10, help="numbe
 parser.add_argument("--minibatch_averaging", type=bool, default=False, help="Minibatch averaging")
 
 parser.add_argument("--pretrained_status", type=bool, default=False, help="If want to use ae pretrained weights")
-parser.add_argument("--training", type=bool, default=False, help="Training status")
+parser.add_argument("--training", type=bool, default=True, help="Training status")
 parser.add_argument("--resume", type=bool, default=False, help="Training status")
 parser.add_argument("--finetuning", type=bool, default=False, help="Training status")
-parser.add_argument("--generate", type=bool, default=True, help="Generating Sythetic Data")
-parser.add_argument("--evaluate", type=bool, default=True, help="Evaluation status")
-parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/experiments/pytorch/model/' + experimentName),
+parser.add_argument("--generate", type=bool, default=False, help="Generating Sythetic Data")
+parser.add_argument("--evaluate", type=bool, default=False, help="Evaluation status")
+parser.add_argument("--expPATH", type=str, default=os.path.expanduser('~/workspace/experiments/pytorch/model/' + experimentName),
                     help="Training status")
 opt = parser.parse_args()
 print(opt)
