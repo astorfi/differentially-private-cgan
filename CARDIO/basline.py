@@ -11,6 +11,7 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import os
 import numpy as np
 from random import sample
+from sklearn import model_selection
 
 # Read data
 DATASETDIR = os.path.expanduser('~/data/CARDIO')
@@ -53,8 +54,9 @@ pd.DataFrame(test).to_csv(os.path.join(DATASETDIR,'test.csv'))
 # Supervised transformation based on random forests
 # Good to know about feature transformation
 n_estimator=100
-# cls = RandomForestClassifier(max_depth=5, n_estimators=n_estimator)
-cls = GradientBoostingClassifier(n_estimators=n_estimator)
+cls = RandomForestClassifier(max_depth=5, n_estimators=n_estimator)
+# cls = GradientBoostingClassifier(n_estimators=n_estimator)
+# cls = xgb.XGBClassifier(n_estimators=n_estimator)
 cls.fit(X_train, y_train)
 y_pred = cls.predict(X_test)
 # print(np.sum(y_pred_rf==y_test) / y_test.shape[0])
@@ -80,3 +82,10 @@ precision, recall, thresholds = metrics.precision_recall_curve(y_test, y_pred)
 AUPRC = metrics.auc(recall, precision)
 print('AP: ', metrics.average_precision_score(y_test, y_pred))
 print('Area under the precision recall curve: ', AUPRC)
+
+# Cross validation
+# see https://scikit-learn.org/stable/modules/model_evaluation.html
+X, Y = df.drop(['cardio'], axis=1), df['cardio']
+kfold = model_selection.KFold(n_splits=10)
+results = model_selection.cross_val_score(cls, X, Y, cv=kfold, scoring='roc_auc')
+print('AUROC mean: {} std: {}'.format(results.mean(), results.std()))
