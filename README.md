@@ -1,6 +1,6 @@
 # Differentially Private Synthetic Medical Data Generation using Convolutional GANs
 
-[![Name](https://img.shields.io/github/license/astorfi/gan-evaluation)](https://github.com/astorfi/gan-evaluation/blob/master/LICENSE.md)
+[![Name](https://img.shields.io/github/license/astorfi/differentially-private-cgan)](https://github.com/astorfi/differentially-private-cgan/blob/master/LICENSE)
 [![arXiv](https://img.shields.io/badge/arXiv-2010.03549-b31b1b.svg)](https://arxiv.org/abs/2012.11774)
 
 This repository contains an implementation of "Differentially Private Synthetic Medical Data Generation using Convolutional GANs".
