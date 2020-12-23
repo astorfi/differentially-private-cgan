@@ -26,7 +26,6 @@ Table of contents
    * [Paper Summary](#paper-summary)
    * [Running the Code](#Running-the-Code)
       * [Prerequisites](#Prerequisites)
-      * [Datasets](#Datasets)
    * [Collaborators](#Collaborators)
 <!--te-->
 
