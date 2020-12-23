@@ -10,11 +10,13 @@ For a detailed description of the architecture please read [our paper](https://a
 
 ## Bibtex
 
-    @article{torfi2020evaluation,
-      title={On the Evaluation of Generative Adversarial Networks By Discriminative Models},
-      author={Torfi, Amirsina and Beyki, Mohammadreza and Fox, Edward A},
-      journal={arXiv preprint arXiv:2010.03549},
-      year={2020}
+    @misc{torfi2020differentially,
+      title={Differentially Private Synthetic Medical Data Generation using Convolutional GANs}, 
+      author={Amirsina Torfi and Edward A. Fox and Chandan K. Reddy},
+      year={2020},
+      eprint={2012.11774},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG}
     }
 
 
